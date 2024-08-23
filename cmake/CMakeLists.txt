@@ -23,6 +23,19 @@ project(lammps CXX)
 set(SOVERSION 0)
 get_property(BUILD_IS_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 
+# ignore Anaconda compilers, which are typically not compatible with the system
+if(DEFINED ENV{CONDA_PREFIX})
+  set(CMAKE_IGNORE_PATH $ENV{CONDA_PREFIX}/bin)
+endif()
+
+# exclude Anaconda directories from search
+if(DEFINED ENV{CONDA_PREFIX})
+  list(APPEND CMAKE_IGNORE_PREFIX_PATH $ENV{CONDA_PREFIX})
+  list(APPEND CMAKE_IGNORE_PATH $ENV{CONDA_PREFIX}/bin)
+  # need CMAKE_IGNORE_PATH to ensure system env var PATH
+  # doesn't interfere despite CMAKE_IGNORE_PREFIX_PATH
+endif()
+
 include(GNUInstallDirs)
 get_filename_component(LAMMPS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/.. ABSOLUTE)
 get_filename_component(LAMMPS_LIB_BINARY_DIR ${CMAKE_BINARY_DIR}/lib ABSOLUTE)
