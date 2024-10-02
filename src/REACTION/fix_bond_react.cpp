@@ -13,7 +13,7 @@ See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-Contributing Author: Jacob Gissinger (jacob.r.gissinger@gmail.com)
+Contributing Author: Jacob Gissinger (jacob.r.gissinger@gmail.com) . Modified by Ivan Palaia in November 2022.
 ------------------------------------------------------------------------- */
 
 #include "fix_bond_react.h"
@@ -135,10 +135,11 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   status = PROCEED;
 
   // reaction functions used by 'custom' constraint
-  nrxnfunction = 2;
+  nrxnfunction = 3;
   rxnfunclist.resize(nrxnfunction);
   rxnfunclist[0] = "rxnsum";
   rxnfunclist[1] = "rxnave";
+  rxnfunclist[2] = "rxndiffIvan";
   nvvec = 0;
   ncustomvars = 0;
   vvec = nullptr;
@@ -229,6 +230,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(custom_charges_fragid,nreacts,"bond/react:custom_charges_fragid");
   memory->create(create_atoms_flag,nreacts,"bond/react:create_atoms_flag");
   memory->create(modify_create_fragid,nreacts,"bond/react:modify_create_fragid");
+  memory->create(modify_create_nucrand,nreacts,"bond/react:modify_create_nucrand");          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
   memory->create(overlapsq,nreacts,"bond/react:overlapsq");
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
   memory->create(nconstraints,nreacts,"bond/react:nconstraints");
@@ -254,11 +256,12 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     custom_charges_fragid[i] = -1;
     create_atoms_flag[i] = 0;
     modify_create_fragid[i] = -1;
+    modify_create_nucrand[i] = -1;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
     overlapsq[i] = 0;
     molecule_keyword[i] = OFF;
     nconstraints[i] = 0;
-    // set default limit duration to 60 timesteps
-    limit_duration[i] = 60;
+    // set default limit duration to 60 timesteps // IVAN: Changed from 60 to 5 to correct bug
+    limit_duration[i] = 5;
     reaction_count[i] = 0;
     local_rxn_count[i] = 0;
     ghostly_rxn_count[i] = 0;
@@ -423,6 +426,17 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
               modify_create_fragid[rxn] = atom->molecules[reacted_mol[rxn]]->findfragment(arg[iarg+1]);
               if (modify_create_fragid[rxn] < 0) error->one(FLERR,"Bond/react: Molecule fragment for "
                                                              "'modify_create' keyword does not exist");
+            }
+            iarg += 2;
+          } else if (strcmp(arg[iarg],"nuc") == 0) {                                                // Adding a flag "nuc" to nucleate the new dimer in a random position within the box, independent of the position of the nucleator - Chris 22/02/2023
+            if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
+                                          "'modify_create' has too few arguments");
+            if (strcmp(arg[iarg+1],"no") == 0) modify_create_nucrand[rxn] = -1; //default
+            else if (strcmp(arg[iarg+1],"yes") == 0) modify_create_nucrand[rxn] = 1; // random orientation
+            else if (strcmp(arg[iarg+1],"xor") == 0) modify_create_nucrand[rxn] = 0; // positive orientation in X
+            else if (strcmp(arg[iarg+1],"mod") == 0) {
+              modify_create_nucrand[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
+              iarg += 1;
             }
             iarg += 2;
           } else if (strcmp(arg[iarg],"overlap") == 0) {
@@ -624,6 +638,7 @@ FixBondReact::~FixBondReact()
   memory->destroy(constraintstr);
   memory->destroy(create_atoms_flag);
   memory->destroy(modify_create_fragid);
+  memory->destroy(modify_create_nucrand);          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
   memory->destroy(overlapsq);
 
   memory->destroy(iatomtype);
@@ -2040,6 +2055,7 @@ void FixBondReact::get_IDcoords(int mode, int myID, double *center)
     int iatom = atom->map(glove[myID-1][1]);
     for (int i = 0; i < 3; i++)
       center[i] = x[iatom][i];
+    // printf("Atom mode -- iatom = %d (ID = %d) - center[0] = %.2f - center[1] = %.2f - center[2] = %.2f\n", iatom, atom->tag[iatom], center[0], center[1], center[2]); -- Chris, 20/02/2023
   } else {
     int iref = -1; // choose first atom as reference
     int iatom;
@@ -2060,6 +2076,7 @@ void FixBondReact::get_IDcoords(int mode, int myID, double *center)
     }
     for (int i = 0; i < 3; i++)
       center[i] /= nfragatoms;
+    // printf("Non-atom mode -- iatom = %d (ID = %d) - center[0] = %.2f - center[1] = %.2f - center[2] = %.2f\n", iatom, atom->tag[iatom], center[0], center[1], center[2]); -- Chris, 20/02/2023
   }
 }
 
@@ -2295,8 +2312,41 @@ double FixBondReact::rxnfunction(std::string rxnfunc, std::string varid,
     }
   }
 
+  if (rxnfunc == "rxndiffIvan") {
+    if (fragid == "all") {
+      error->one(FLERR,"Bond/react: Molecule fragment "
+                              "in rxndiffIvan not specified");
+    } else {
+      int iatom1, iatom2;
+      for (int i = 0; i < onemol->natoms; i++) {
+        if (onemol->fragmentmask[ifrag][i]) {
+          iatom = atom->map(glove[i][1]);
+          // printf("i=%d iatom=%d var=%g; ", i, iatom, vvec[iatom][ivar]);
+          if (nsum == 0) {
+            iatom1 = iatom;
+            sumvvec += vvec[iatom][ivar];
+            nsum++;
+          }
+          else if (nsum==1) {
+            iatom2 = iatom;
+            sumvvec -= vvec[iatom][ivar];
+            nsum++;
+          }
+          else {
+            error->one(FLERR,"Bond/react: Molecule fragment "
+                              "in rxndiffIvan must contain exactly 2 atoms");
+          }
+        }
+      //if (iatom1>iatom2)
+      //  sumvvec = -sumvvec
+      }
+    // printf("nsum=%d sumvvec=%g.\n", nsum, sumvvec);
+    }
+  }
+
   if (rxnfunc == "rxnsum") return sumvvec;
   if (rxnfunc == "rxnave") return sumvvec/nsum;
+  if (rxnfunc == "rxndiffIvan") return sumvvec;
   return 0.0;
 }
 
@@ -3149,7 +3199,7 @@ void FixBondReact::update_everything()
     }
 
     // Angles! First let's delete all angle info:
-    if (force->angle && twomol->angleflag) {
+    if (force->angle) {
       int *num_angle = atom->num_angle;
       int **angle_type = atom->angle_type;
       tagint **angle_atom1 = atom->angle_atom1;
@@ -3158,7 +3208,10 @@ void FixBondReact::update_everything()
 
       for (int i = 0; i < update_num_mega; i++) {
         rxnID = update_mega_glove[0][i];
+        onemol = atom->molecules[unreacted_mol[rxnID]];
         twomol = atom->molecules[reacted_mol[rxnID]];
+        if ( !(onemol->angleflag) && !(twomol->angleflag) )
+          continue;
         for (int j = 0; j < twomol->natoms; j++) {
           int jj = equivalences[j][1][rxnID]-1;
           if (atom->map(update_mega_glove[jj+1][i]) < nlocal && atom->map(update_mega_glove[jj+1][i]) >= 0) {
@@ -3226,7 +3279,7 @@ void FixBondReact::update_everything()
     }
 
     // Dihedrals! first let's delete all dihedral info for landlocked atoms
-    if (force->dihedral && twomol->dihedralflag) {
+    if (force->dihedral) {
       int *num_dihedral = atom->num_dihedral;
       int **dihedral_type = atom->dihedral_type;
       tagint **dihedral_atom1 = atom->dihedral_atom1;
@@ -3236,7 +3289,10 @@ void FixBondReact::update_everything()
 
       for (int i = 0; i < update_num_mega; i++) {
         rxnID = update_mega_glove[0][i];
+        onemol = atom->molecules[unreacted_mol[rxnID]];
         twomol = atom->molecules[reacted_mol[rxnID]];
+        if ( !(onemol->dihedralflag) && !(twomol->dihedralflag) )
+          continue;        
         for (int j = 0; j < twomol->natoms; j++) {
           int jj = equivalences[j][1][rxnID]-1;
           if (atom->map(update_mega_glove[jj+1][i]) < nlocal && atom->map(update_mega_glove[jj+1][i]) >= 0) {
@@ -3484,12 +3540,14 @@ insert created atoms
 int FixBondReact::insert_atoms(tagint **my_mega_glove, int iupdate)
 {
   // inserting atoms based off fix_deposit->pre_exchange
+  // printf("      Inserting atoms...\n");
   int flag;
   imageint *imageflags;
   double **coords,lamda[3],rotmat[3][3];
   double *newcoord;
   double **v = atom->v;
   double t,delx,dely,delz,rsq;
+  int molinit;                    // Molecule ID of the initiator particles, added to create particles with the right molecule IDs -- Chris 22/02/2023
 
   memory->create(coords,twomol->natoms,3,"bond/react:coords");
   memory->create(imageflags,twomol->natoms,"bond/react:imageflags");
@@ -3541,7 +3599,9 @@ int FixBondReact::insert_atoms(tagint **my_mega_glove, int iupdate)
 
     double **xfrozen; // coordinates for the "frozen" target molecule
     double **xmobile; // coordinates for the "mobile" molecule
+    double **oxfrozen; // OG coordinates for the "frozen" target molecule (for access after random redefinition if modify_create_nucrand is used) -- Chris 20/02/2023
     memory->create(xfrozen,n2superpose,3,"bond/react:xfrozen");
+    memory->create(oxfrozen,n2superpose,3,"bond/react:oxfrozen"); // OG coordinates for the "frozen" target molecule (for access after random redefinition if modify_create_nucrand is used) -- Chris 20/02/2023
     memory->create(xmobile,n2superpose,3,"bond/react:xmobile");
     tagint iatom;
     tagint iref = -1; // choose first atom as reference
@@ -3556,12 +3616,90 @@ int FixBondReact::insert_atoms(tagint **my_mega_glove, int iupdate)
           continue;
         }
         iatom = atom->map(my_mega_glove[ipre+1][iupdate]);
-        if (iref == -1) iref = iatom;
-        iatom = domain->closest_image(iref,iatom);
+        molinit = atom->molecule[iatom];                        // Molecule ID of the initiator particles, added to create particles with the right molecule IDs -- Chris 22/02/2023
         for (int k = 0; k < 3; k++) {
           xfrozen[fit_incr][k] = x[iatom][k];
           xmobile[fit_incr][k] = twomol->x[j][k];
+          oxfrozen[fit_incr][k] = x[iatom][k];  // OG coordinates for the "frozen" target molecule (for access after random redefinition if modify_create_nucrand is used) -- Chris 20/02/2023
         }
+        if (modify_create_nucrand[rxnID] == 1) {
+          double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
+          if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID]
+            xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
+            xfrozen[fit_incr][1] = (domain->boxhi[1] - domain->boxlo[1]) * (random[rxnID]->uniform()-0.5);
+            xfrozen[fit_incr][2] = 0.0;
+          }
+          else {
+            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
+            xfrozen[fit_incr][2] = 0.0;
+          }
+        }
+        else if (modify_create_nucrand[rxnID] == 0) { // only positive X orientation! -- Chris 27/07/2023
+          if (fit_incr == 0) { // random position
+            for (int k = 0; k < 3; k++) {
+              if (dimension == 2 && k == 2) {
+                xfrozen[fit_incr][k] = 0.0;
+              }
+              else {
+                xfrozen[fit_incr][k] = (domain->boxhi[k] - domain->boxlo[k]) * (random[rxnID]->uniform()-0.5);
+              }
+            }
+          }
+          else { // positive in X only
+            xfrozen[fit_incr][0] = xfrozen[0][0] + fit_incr;
+            xfrozen[fit_incr][1] = xfrozen[0][1];
+            xfrozen[fit_incr][2] = xfrozen[0][2];
+          }
+        }
+        else if (modify_create_nucrand[rxnID] > 1) { // Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
+          double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
+          if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID] - Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
+            xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
+            // Two RN -> 1 Normal-distributed number
+            double u1 = random[rxnID]->uniform();
+            double u2 = random[rxnID]->uniform();
+            xfrozen[fit_incr][1] = sqrt(-2*log(u1))*cos(2*M_PI*u2)*modify_create_nucrand[rxnID]+0.0;
+            xfrozen[fit_incr][2] = 0.0;
+          }
+          else {
+            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
+            xfrozen[fit_incr][2] = 0.0;
+          }
+        }
+        // New boundary implementation, without using the closest_image() function from domain.cpp, which sometimes returns the wrong ID, likely due to the resetting of molecules IDs as new particles are created (part of the fix_bond_react.cpp)
+        // Chris - 20/02/2023
+        if (fit_incr > 0) {
+          double dx = xfrozen[fit_incr][0]-xfrozen[0][0];
+          double dy = xfrozen[fit_incr][1]-xfrozen[0][1];
+          double dz = xfrozen[fit_incr][2]-xfrozen[0][2];
+          if (dx < domain->boxlo[0]) {
+            xfrozen[fit_incr][0] += (domain->boxhi[0] - domain->boxlo[0]);
+            // printf("              molecule crosses upper boundary in X!    (L = %.2f) -> rescaling subhead position by -L in X\n", (domain->boxhi[0] - domain->boxlo[0]));
+          }
+          else if (dx > domain->boxhi[0]) {
+            xfrozen[fit_incr][0] -= (domain->boxhi[0] - domain->boxlo[0]);
+            // printf("              molecule crosses lower boundary in X!    (L = %.2f) -> rescaling subhead position by +L in X\n", (domain->boxhi[0] - domain->boxlo[0]));
+          }
+          if (dy < domain->boxlo[1]) {
+            xfrozen[fit_incr][1] += (domain->boxhi[1] - domain->boxlo[1]);
+            // printf("              molecule crosses upper boundary in Y!    (L = %.2f) -> rescaling subhead position by -L in Y\n", (domain->boxhi[1] - domain->boxlo[1]));
+          }
+          else if (dy > domain->boxhi[1]) {
+            xfrozen[fit_incr][1] -= (domain->boxhi[1] - domain->boxlo[1]);
+            // printf("              molecule crosses lower boundary in Y!    (L = %.2f) -> rescaling subhead position by +L in Y\n", (domain->boxhi[1] - domain->boxlo[1]));
+          }
+          if (dz < domain->boxlo[2]) {
+            xfrozen[fit_incr][2] += (domain->boxhi[2] - domain->boxlo[2]);
+            // printf("              molecule crosses upper boundary in Z!    (L = %.2f) -> rescaling subhead position by -L in Z\n", (domain->boxhi[2] - domain->boxlo[2]));
+          }
+          else if (dz > domain->boxhi[2]) {
+            xfrozen[fit_incr][2] -= (domain->boxhi[2] - domain->boxlo[2]);
+            // printf("              molecule crosses lower boundary in Z!    (L = %.2f) -> rescaling subhead position by +L in X\n", (domain->boxhi[2] - domain->boxlo[2]));
+          }
+        }
+        // printf("          xfrozen = [%.2f, %.2f %.2f] - xmobile = [%.2f, %.2f %.2f]\n", xfrozen[fit_incr][0], xfrozen[fit_incr][1], xfrozen[fit_incr][2], xmobile[fit_incr][0], xmobile[fit_incr][1], xmobile[fit_incr][2]);
         fit_incr++;
       }
     }
@@ -3570,6 +3708,7 @@ int FixBondReact::insert_atoms(tagint **my_mega_glove, int iupdate)
       for (int j = 0; j < 3; j++)
         rotmat[i][j] = superposer.R[i][j];
     memory->destroy(xfrozen);
+    memory->destroy(oxfrozen); // Chris added this 27/07/2023
     memory->destroy(xmobile);
   }
   MPI_Allreduce(MPI_IN_PLACE,&fitroot,1,MPI_INT,MPI_SUM,world);
@@ -3581,14 +3720,20 @@ int FixBondReact::insert_atoms(tagint **my_mega_glove, int iupdate)
       // apply optimal rotation/translation for created atom coords
       // also map coords back into simulation box
       if (fitroot == me) {
+        // printf("          fitroot = %d - m = %d - ifit = %d - ifit ID = %d\n", fitroot, m, ifit, atom->tag[ifit]);
         MathExtra::matvec(rotmat,twomol->x[m],coords[m]);
+        // printf("            Before superposer - x = [%.2f, %.2f %.2f] - coords = [%.2f, %.2f %.2f]\n", twomol->x[m][0], twomol->x[m][1], twomol->x[m][2], coords[m][0], coords[m][1], coords[m][2]);
         for (int i = 0; i < 3; i++) coords[m][i] += superposer.T[i];
+        // printf("            After superposer - x = [%.2f, %.2f %.2f] - coords = [%.2f, %.2f %.2f]\n", twomol->x[m][0], twomol->x[m][1], twomol->x[m][2], coords[m][0], coords[m][1], coords[m][2]);
         imageflags[m] = atom->image[ifit];
+        // printf("          image[ifit] = %d - imageflags[m] = %d\n", atom->image[ifit], imageflags[m]);
         domain->remap(coords[m],imageflags[m]);
+        // printf("            After remap - x = [%.2f, %.2f %.2f] - coords = [%.2f, %.2f %.2f]\n", twomol->x[m][0], twomol->x[m][1], twomol->x[m][2], coords[m][0], coords[m][1], coords[m][2]);
       }
       MPI_Bcast(&imageflags[m],1,MPI_LMP_IMAGEINT,fitroot,world);
       MPI_Bcast(coords[m],3,MPI_DOUBLE,fitroot,world);
     }
+    // printf("        Coordinates of %d - x = [%.2f, %.2f %.2f] - coords = [%.2f, %.2f %.2f]\n", m, twomol->x[m][0], twomol->x[m][1], twomol->x[m][2], coords[m][0], coords[m][1], coords[m][2]);
   }
 
   // check distance between any existing atom and inserted atom
@@ -3604,6 +3749,7 @@ int FixBondReact::insert_atoms(tagint **my_mega_glove, int iupdate)
           domain->minimum_image(delx,dely,delz);
           rsq = delx*delx + dely*dely + delz*delz;
           if (rsq < overlapsq[rxnID]) {
+            // printf("rsq = %.2f ([%.2f, %.2f, %.2f]) < coffsq = %.2f -> abort! -- atom involved: %d\n", rsq, delx, dely, delz, overlapsq[rxnID], atom->tag[i]); -- Chris, 21/02/2023
             abortflag = 1;
             break;
           }
@@ -3641,7 +3787,7 @@ int FixBondReact::insert_atoms(tagint **my_mega_glove, int iupdate)
         domain->x2lamda(coords[m],lamda);
         newcoord = lamda;
       } else newcoord = coords[m];
-
+      
       flag = 0;
       if (newcoord[0] >= sublo[0] && newcoord[0] < subhi[0] &&
           newcoord[1] >= sublo[1] && newcoord[1] < subhi[1] &&
@@ -3677,28 +3823,44 @@ int FixBondReact::insert_atoms(tagint **my_mega_glove, int iupdate)
         // locally update mega_glove
         my_mega_glove[preID][iupdate] = atom->tag[n];
 
+        // Define molecule IDs of the newly created particles from the templates.
+        // If molID = 0 in the template then use the same molID as the initiators (defined above, new)
+        // If molID > 0 in the template then use maxmol_all and add the molID in the template (for nucleation for example)
+        // Chris -- 22/02/2023
         if (atom->molecule_flag) {
           if (twomol->moleculeflag) {
-            atom->molecule[n] = maxmol_all + twomol->molecule[m];
+            if (twomol->molecule[m] > 0) {
+              atom->molecule[n] = maxmol_all + twomol->molecule[m];
+              // printf("Molecule ID in template: %d --> Molecule ID in simulation: %d -- Previous max molecule ID: %d -- Molecule ID of initiators: %d\n", twomol->molecule[m], atom->molecule[n], maxmol_all, molinit);
+            }
+            else {
+              atom->molecule[n] = molinit;
+              // printf("Molecule ID in template: %d --> Molecule ID in simulation: %d -- Previous max molecule ID: %d -- Molecule ID of initiators: %d\n", twomol->molecule[m], atom->molecule[n], maxmol_all, molinit);
+            }
           } else {
             atom->molecule[n] = maxmol_all + 1;
+            // printf("No molecule ID in template! --> Molecule ID in simulation: %d -- Previous max molecule ID: %d -- Molecule ID of initiators: %d\n", atom->molecule[n], maxmol_all, molinit);
           }
         }
 
         atom->mask[n] = 1 | groupbit;
         atom->image[n] = imageflags[m];
 
+        // Save polymerisation / nucleation time to atom variable
+
         // guess a somewhat reasonable initial velocity based on reaction site
         // further control is possible using bond_react_MASTER_group
         // compute |velocity| corresponding to a given temperature t, using specific atom's mass
-        double vtnorm = sqrt(t / (force->mvv2e / (dimension * force->boltz)) / atom->mass[twomol->type[m]]);
-        v[n][0] = random[rxnID]->uniform();
-        v[n][1] = random[rxnID]->uniform();
-        v[n][2] = random[rxnID]->uniform();
-        double vnorm = sqrt(v[n][0]*v[n][0] + v[n][1]*v[n][1] + v[n][2]*v[n][2]);
-        v[n][0] = v[n][0]/vnorm*vtnorm;
-        v[n][1] = v[n][1]/vnorm*vtnorm;
-        v[n][2] = v[n][2]/vnorm*vtnorm;
+        // Chris 12/10/2023: Replacing scaling factor of velocities for the right one: sqrt(12 kT / m)
+        double vtnorm = sqrt( ( 12 * t * force->boltz ) / ( atom->mass[twomol->type[m]] * force->mvv2e ) );
+        v[n][0] = vtnorm*(0.5-(random[rxnID]->uniform()));     // Chris 21/07/2023 added "0.5-"
+        v[n][1] = vtnorm*(0.5-(random[rxnID]->uniform()));     // Chris 21/07/2023 added "0.5-"
+        if (dimension < 3) {
+          v[n][2] = 0.0;
+        }
+        else {
+          v[n][2] = vtnorm*(0.5-(random[rxnID]->uniform()));     // Chris 21/07/2023 added "0.5-"
+        }
         modify->create_attribute(n);
 
         // initialize group statuses

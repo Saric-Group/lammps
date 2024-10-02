@@ -13,7 +13,7 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing author: Paul Crozier, Aidan Thompson (SNL)
+   Contributing author: Paul Crozier, Aidan Thompson (SNL) . Modified by Ivan Palaia in November 2022.
 ------------------------------------------------------------------------- */
 
 #include "fix_gcmc.h"
@@ -444,6 +444,7 @@ void FixGCMC::init()
 {
 
   triclinic = domain->triclinic;
+  dimension = domain->dimension;
 
   // set probabilities for MC moves
 
@@ -560,8 +561,8 @@ void FixGCMC::init()
                  "same molecule template ID");
   }
 
-  if (domain->dimension == 2)
-    error->all(FLERR,"Cannot use fix gcmc in a 2d simulation");
+  //if (domain->dimension == 2)
+  //  error->all(FLERR,"Cannot use fix gcmc in a 2d simulation");
 
   // create a new group for interaction exclusions
   // used for attempted atom or molecule deletions
@@ -904,7 +905,7 @@ void FixGCMC::attempt_atomic_deletion()
 /* ----------------------------------------------------------------------
 ------------------------------------------------------------------------- */
 
-void FixGCMC::attempt_atomic_insertion()
+void FixGCMC::attempt_atomic_insertion()   // MODIFIED 2D
 {
   double lamda[3];
 
@@ -919,11 +920,15 @@ void FixGCMC::attempt_atomic_insertion()
     int region_attempt = 0;
     coord[0] = region_xlo + random_equal->uniform() * (region_xhi-region_xlo);
     coord[1] = region_ylo + random_equal->uniform() * (region_yhi-region_ylo);
-    coord[2] = region_zlo + random_equal->uniform() * (region_zhi-region_zlo);
+    if (dimension == 2)
+      coord[2] = region_zlo + 0.5 * (region_zhi-region_zlo);
+    else
+      coord[2] = region_zlo + random_equal->uniform() * (region_zhi-region_zlo);
     while (domain->regions[iregion]->match(coord[0],coord[1],coord[2]) == 0) {
       coord[0] = region_xlo + random_equal->uniform() * (region_xhi-region_xlo);
       coord[1] = region_ylo + random_equal->uniform() * (region_yhi-region_ylo);
-      coord[2] = region_zlo + random_equal->uniform() * (region_zhi-region_zlo);
+      if (dimension != 2)
+        coord[2] = region_zlo + random_equal->uniform() * (region_zhi-region_zlo);
       region_attempt++;
       if (region_attempt >= max_region_attempts) return;
     }
@@ -932,11 +937,17 @@ void FixGCMC::attempt_atomic_insertion()
     if (triclinic == 0) {
       coord[0] = xlo + random_equal->uniform() * (xhi-xlo);
       coord[1] = ylo + random_equal->uniform() * (yhi-ylo);
-      coord[2] = zlo + random_equal->uniform() * (zhi-zlo);
+      if (dimension == 2)
+        coord[2] = region_zlo + 0.5 * (region_zhi-region_zlo);
+      else
+        coord[2] = zlo + random_equal->uniform() * (zhi-zlo);
     } else {
       lamda[0] = random_equal->uniform();
       lamda[1] = random_equal->uniform();
-      lamda[2] = random_equal->uniform();
+      if (dimension == 2)
+        lamda[2] = 0.0;
+      else
+        lamda[2] = random_equal->uniform();
 
       // wasteful, but necessary
 
@@ -961,6 +972,7 @@ void FixGCMC::attempt_atomic_insertion()
         lamda[1] >= sublo[1] && lamda[1] < subhi[1] &&
         lamda[2] >= sublo[2] && lamda[2] < subhi[2]) proc_flag = 1;
   }
+  //printf("\nproc_flag %d\n", proc_flag);
 
   int success = 0;
   if (proc_flag) {
@@ -989,7 +1001,10 @@ void FixGCMC::attempt_atomic_insertion()
 
       atom->v[m][0] = random_unequal->gaussian()*sigma;
       atom->v[m][1] = random_unequal->gaussian()*sigma;
-      atom->v[m][2] = random_unequal->gaussian()*sigma;
+      if (dimension ==2)
+        atom->v[m][2] = 0.0;
+      else
+        atom->v[m][2] = random_unequal->gaussian()*sigma;
       modify->create_attribute(m);
 
       success = 1;
@@ -1594,7 +1609,7 @@ void FixGCMC::attempt_atomic_deletion_full()
 /* ----------------------------------------------------------------------
 ------------------------------------------------------------------------- */
 
-void FixGCMC::attempt_atomic_insertion_full()
+void FixGCMC::attempt_atomic_insertion_full()  // MODIFIED 2D
 {
   double lamda[3];
   ninsertion_attempts += 1.0;
@@ -1608,11 +1623,15 @@ void FixGCMC::attempt_atomic_insertion_full()
     int region_attempt = 0;
     coord[0] = region_xlo + random_equal->uniform() * (region_xhi-region_xlo);
     coord[1] = region_ylo + random_equal->uniform() * (region_yhi-region_ylo);
-    coord[2] = region_zlo + random_equal->uniform() * (region_zhi-region_zlo);
+    if (dimension == 2)
+      coord[2] = region_zlo + 0.5 * (region_zhi-region_zlo);
+    else
+      coord[2] = region_zlo + random_equal->uniform() * (region_zhi-region_zlo);
     while (domain->regions[iregion]->match(coord[0],coord[1],coord[2]) == 0) {
       coord[0] = region_xlo + random_equal->uniform() * (region_xhi-region_xlo);
       coord[1] = region_ylo + random_equal->uniform() * (region_yhi-region_ylo);
-      coord[2] = region_zlo + random_equal->uniform() * (region_zhi-region_zlo);
+      if (dimension != 2)
+        coord[2] = region_zlo + random_equal->uniform() * (region_zhi-region_zlo);
       region_attempt++;
       if (region_attempt >= max_region_attempts) return;
     }
@@ -1621,11 +1640,17 @@ void FixGCMC::attempt_atomic_insertion_full()
     if (triclinic == 0) {
       coord[0] = xlo + random_equal->uniform() * (xhi-xlo);
       coord[1] = ylo + random_equal->uniform() * (yhi-ylo);
-      coord[2] = zlo + random_equal->uniform() * (zhi-zlo);
+      if (dimension == 2)
+        coord[2] = region_zlo + 0.5 * (region_zhi-region_zlo);
+      else
+        coord[2] = zlo + random_equal->uniform() * (zhi-zlo);
     } else {
       lamda[0] = random_equal->uniform();
       lamda[1] = random_equal->uniform();
-      lamda[2] = random_equal->uniform();
+      if (dimension == 2)
+        lamda[2] = 0.0;
+      else
+        lamda[2] = random_equal->uniform();
 
       // wasteful, but necessary
 
@@ -1651,6 +1676,8 @@ void FixGCMC::attempt_atomic_insertion_full()
         lamda[2] >= sublo[2] && lamda[2] < subhi[2]) proc_flag = 1;
   }
 
+  //printf("\nproc_flag (full) %d\n",proc_flag);
+  
   if (proc_flag) {
     atom->avec->create_atom(ngcmc_type,coord);
     int m = atom->nlocal - 1;
@@ -1666,7 +1693,10 @@ void FixGCMC::attempt_atomic_insertion_full()
 
     atom->v[m][0] = random_unequal->gaussian()*sigma;
     atom->v[m][1] = random_unequal->gaussian()*sigma;
-    atom->v[m][2] = random_unequal->gaussian()*sigma;
+    if (dimension ==2)
+      atom->v[m][2] = 0.0;
+    else
+      atom->v[m][2] = random_unequal->gaussian()*sigma;
     if (charge_flag) atom->q[m] = charge;
     modify->create_attribute(m);
   }
