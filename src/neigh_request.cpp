@@ -303,6 +303,7 @@ void NeighRequest::set_kokkos_host(int flag)
   kokkos_host = flag;
 }
 
+
 void NeighRequest::set_skip(int *_iskip, int **_ijskip)
 {
   skip = 1;
@@ -314,6 +315,13 @@ void NeighRequest::set_molskip(int _molskip)
 {
   skip = 1;
   molskip = _molskip;
+}
+
+void NeighRequest::set_addlip()
+{
+  pair=0;
+  fix=1;
+  occasional=1;
 }
 
 void NeighRequest::enable_full()
