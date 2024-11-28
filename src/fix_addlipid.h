@@ -36,7 +36,7 @@ class FixAddLipid : public Fix {
   void unlimit_bond();
   void update_everything();
 
-  int pack_reverse_comm_size(int, int) override;
+  //int pack_reverse_comm_size(int, int) override;
   int pack_reverse_comm(int, int, double *) override;
   void unpack_reverse_comm(int, int *, double *) override;
 

@@ -1597,28 +1597,28 @@ int FixAddLipid::pack_reverse_comm(int n, int first, double *buf)
     for (i = first; i < last; i++) {
    // k=0;
    // m++;
-    if (i_statted_tags[i]==0)
-          {
+  //  if (i_statted_tags[i]==0)
+    //      {
       buf[m++] = ubuf(i_statted_tags[i]).d;
       buf[m++] = ubuf(i_limit_tags[i]).d;
     //  k=k+2;
-          }
+      //    }
     if (ignore_neigh_flag == 2) {
-          if (i_ignored_tags[i]==1) {
+        //  if (i_ignored_tags[i]==1) {
       buf[m++] = ubuf(i_ignored_tags[i]).d;
       buf[m++] = ubuf(i_ignore_tags[i]).d;
      // k=k+2;
-          }
+         // }
     }
    // buf[m-k-1]=k+1;
     }
   } else {
 
     for (i = first; i < last; i++) {
-    if (i_ignored_tags[i]==1) {
+   // if (i_ignored_tags[i]==1) {
           buf[m++] = ubuf(i_ignored_tags[i]).d;
           buf[m++] = ubuf(i_ignore_tags[i]).d;
-    }
+    //}
     }
     }
 
@@ -1636,9 +1636,9 @@ int FixAddLipid::pack_reverse_comm(int n, int first, double *buf)
 
 void FixAddLipid::unpack_reverse_comm(int n, int *list, double *buf)
 {
-  int i,j,m;
+  int i,j,m,testi;
 
- int ncount;
+ //int ncount;
 
   int flag_st, cols;
   int *i_limit_tags;
@@ -1669,35 +1669,37 @@ void FixAddLipid::unpack_reverse_comm(int n, int *list, double *buf)
   if (stabilization_flag==1) {
     for (i = 0; i < n; i++) {
           j = list[i];
-          ncount = static_cast<int>(buf[m++]);
-          if (ncount>1) {
-          test = ubuf(buf[m++]).i;
-          if (test == 0) {
-      i_statted_tags[j] = test;
+        //  ncount = static_cast<int>(buf[m++]);
+       //   if (ncount>1) {
+          testi = ubuf(buf[m++]).i;
+          if (testi == 0) {
+      i_statted_tags[j] = testi;
       i_limit_tags[j] = ubuf(buf[m++]).i;
           } else {
       m++;
          }
 
           if (ignore_neigh_flag == 2) {
-      test = ubuf(buf[m++]).i;
-      if (test == 1) {
-              i_ignored_tags[j] = test;
+      testi = ubuf(buf[m++]).i;
+      if (testi == 1) {
+              i_ignored_tags[j] = testi;
               i_ignore_tags[j] = ubuf(buf[m++]).i;
       } else {
               m++;
       }
           }
-          }
+         // }
 
 
     }
   } else {
     for (i = 0; i < n; i++) {
+
           j = list[i];
-          test = ubuf(buf[m++]).i;
-          if (test == 1) {
-      i_ignored_tags[j] = test;
+          testi = ubuf(buf[m++]).i;
+
+          if (testi == 1) {
+      i_ignored_tags[j] = testi;
       i_ignore_tags[j] = ubuf(buf[m++]).i;
           } else {
       m++;
@@ -1710,7 +1712,7 @@ void FixAddLipid::unpack_reverse_comm(int n, int *list, double *buf)
 }
 
 
-
+/*
 int FixAddLipid::pack_reverse_comm_size(int n, int first){
     int i,m,last;
     int flag_st, cols;
@@ -1747,7 +1749,7 @@ int FixAddLipid::pack_reverse_comm_size(int n, int first){
 }
 
 
-
+*/
 
 /* ---------------------------------------------------------------------- */
 
