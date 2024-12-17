@@ -243,6 +243,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(rescale_charges_flag,nreacts,"bond/react:rescale_charges_flag");
   memory->create(create_atoms_flag,nreacts,"bond/react:create_atoms_flag");
   memory->create(modify_create_fragid,nreacts,"bond/react:modify_create_fragid");
+  memory->create(modify_create_nucrand,nreacts,"bond/react:modify_create_nucrand");          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
   memory->create(overlapsq,nreacts,"bond/react:overlapsq");
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
   memory->create(nconstraints,nreacts,"bond/react:nconstraints");
@@ -272,6 +273,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     rescale_charges_flag[i] = 0;
     create_atoms_flag[i] = 0;
     modify_create_fragid[i] = -1;
+    modify_create_nucrand[i] = -1;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
     overlapsq[i] = 0.0;
     molecule_keyword[i] = OFF;
     nconstraints[i] = 0;
@@ -430,6 +432,17 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
               modify_create_fragid[rxn] = atom->molecules[reacted_mol[rxn]]->findfragment(arg[iarg+1]);
               if (modify_create_fragid[rxn] < 0) error->one(FLERR,"Fix bond/react: Molecule fragment for "
                                                              "'modify_create' keyword does not exist");
+            }
+            iarg += 2;
+          } else if (strcmp(arg[iarg],"nuc") == 0) {                                                // Adding a flag "nuc" to nucleate the new dimer in a random position within the box, independent of the position of the nucleator - Chris 22/02/2023
+            if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
+                                          "'modify_create' has too few arguments");
+            if (strcmp(arg[iarg+1],"no") == 0) modify_create_nucrand[rxn] = -1; //default
+            else if (strcmp(arg[iarg+1],"yes") == 0) modify_create_nucrand[rxn] = 1; // random orientation
+            else if (strcmp(arg[iarg+1],"xor") == 0) modify_create_nucrand[rxn] = 0; // positive orientation in X
+            else if (strcmp(arg[iarg+1],"mod") == 0) {
+              modify_create_nucrand[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
+              iarg += 1;
             }
             iarg += 2;
           } else if (strcmp(arg[iarg],"overlap") == 0) {
@@ -662,6 +675,7 @@ FixBondReact::~FixBondReact()
   memory->destroy(constraintstr);
   memory->destroy(create_atoms_flag);
   memory->destroy(modify_create_fragid);
+  memory->destroy(modify_create_nucrand);          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
   memory->destroy(overlapsq);
 
   memory->destroy(iatomtype);
@@ -3694,6 +3708,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   double **coords,lamda[3],rotmat[3][3];
   double *newcoord;
   double t,delx,dely,delz,rsq;
+  int molinit;
 
   memory->create(coords,twomol->natoms,3,"bond/react:coords");
   memory->create(imageflags,twomol->natoms,"bond/react:imageflags");
@@ -3740,7 +3755,9 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
 
     double **xfrozen; // coordinates for the "frozen" target molecule
     double **xmobile; // coordinates for the "mobile" molecule
+    double **oxfrozen; // OG coordinates for the "frozen" target molecule (for access after random redefinition if modify_create_nucrand is used) -- Chris 20/02/2023
     memory->create(xfrozen,n2superpose,3,"bond/react:xfrozen");
+    memory->create(oxfrozen,n2superpose,3,"bond/react:oxfrozen");
     memory->create(xmobile,n2superpose,3,"bond/react:xmobile");
     tagint iatom;
     tagint iref = -1; // choose first atom as reference
