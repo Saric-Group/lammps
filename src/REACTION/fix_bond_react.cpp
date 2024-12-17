@@ -3763,11 +3763,12 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
     tagint iref = -1; // choose first atom as reference
     int fit_incr = 0;
     for (int j = 0; j < twomol->natoms; j++) {
-      if (modify_create_fragid[rxnID] >= 0)
+      if (modify_create_fragid[rxnID] >= 0) // skip over all not involved atoms if not all atoms are used for the fit
         if (!twomol->fragmentmask[modify_create_fragid[rxnID]][j]) continue;
+      // no continue, so we know our j is now part of the fragment in which addition happens
       int ipre = equivalences[j][1][rxnID]-1; // equiv pre-reaction template index
-      if (!create_atoms[j][rxnID] && !delete_atoms[ipre][rxnID]) {
-        if (atom->map(my_update_mega_glove[ipre+1][iupdate]) < 0) {
+      if (!create_atoms[j][rxnID] && !delete_atoms[ipre][rxnID]) { // no clue what this does
+        if (atom->map(my_update_mega_glove[ipre+1][iupdate]) < 0) { // no idea what the glove is for
           error->warning(FLERR," eligible atoms skipped for created-atoms fit on rank {}\n",
                          comm->me);
           continue;
@@ -3775,9 +3776,82 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         iatom = atom->map(my_update_mega_glove[ipre+1][iupdate]);
         if (iref == -1) iref = iatom;
         iatom = domain->closest_image(iref,iatom);
+
         for (int k = 0; k < 3; k++) {
           xfrozen[fit_incr][k] = x[iatom][k];
           xmobile[fit_incr][k] = twomol->x[j][k];
+          oxfrozen[fit_incr][k] = x[iatom][k];  // OG coordinates for the "frozen" target molecule (for access after random redefinition if modify_create_nucrand is used) -- Chris 20/02/2023
+        }
+        if (modify_create_nucrand[rxnID] == 1) {
+          double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
+          if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID]
+            xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
+            xfrozen[fit_incr][1] = (domain->boxhi[1] - domain->boxlo[1]) * (random[rxnID]->uniform()-0.5);
+            xfrozen[fit_incr][2] = 0.0;
+          }
+          else {
+            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
+            xfrozen[fit_incr][2] = 0.0;
+          }
+        }
+        else if (modify_create_nucrand[rxnID] == 0) { // only positive X orientation! -- Chris 27/07/2023
+          if (fit_incr == 0) { // random position
+            for (int k = 0; k < 3; k++) {
+              if (dimension == 2 && k == 2) {
+                xfrozen[fit_incr][k] = 0.0;
+              }
+              else {
+                xfrozen[fit_incr][k] = (domain->boxhi[k] - domain->boxlo[k]) * (random[rxnID]->uniform()-0.5);
+              }
+            }
+          }
+          else { // positive in X only
+            xfrozen[fit_incr][0] = xfrozen[0][0] + fit_incr;
+            xfrozen[fit_incr][1] = xfrozen[0][1];
+            xfrozen[fit_incr][2] = xfrozen[0][2];
+          }
+        }
+        else if (modify_create_nucrand[rxnID] > 1) { // Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
+          double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
+          if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID] - Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
+            xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
+            // Two RN -> 1 Normal-distributed number
+            double u1 = random[rxnID]->uniform();
+            double u2 = random[rxnID]->uniform();
+            xfrozen[fit_incr][1] = sqrt(-2*log(u1))*cos(2*M_PI*u2)*modify_create_nucrand[rxnID]+0.0;
+            xfrozen[fit_incr][2] = 0.0;
+          }
+          else {
+            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
+            xfrozen[fit_incr][2] = 0.0;
+          }
+        }
+        // New boundary implementation, without using the closest_image() function from domain.cpp, which sometimes returns the wrong ID, likely due to the resetting of molecules IDs as new particles are created (part of the fix_bond_react.cpp)
+        // Chris - 20/02/2023
+        if (fit_incr > 0) {
+          double dx = xfrozen[fit_incr][0]-xfrozen[0][0];
+          double dy = xfrozen[fit_incr][1]-xfrozen[0][1];
+          double dz = xfrozen[fit_incr][2]-xfrozen[0][2];
+          if (dx < domain->boxlo[0]) {
+            xfrozen[fit_incr][0] += (domain->boxhi[0] - domain->boxlo[0]);
+          }
+          else if (dx > domain->boxhi[0]) {
+            xfrozen[fit_incr][0] -= (domain->boxhi[0] - domain->boxlo[0]);
+          }
+          if (dy < domain->boxlo[1]) {
+            xfrozen[fit_incr][1] += (domain->boxhi[1] - domain->boxlo[1]);
+          }
+          else if (dy > domain->boxhi[1]) {
+            xfrozen[fit_incr][1] -= (domain->boxhi[1] - domain->boxlo[1]);
+          }
+          if (dz < domain->boxlo[2]) {
+            xfrozen[fit_incr][2] += (domain->boxhi[2] - domain->boxlo[2]);
+          }
+          else if (dz > domain->boxhi[2]) {
+            xfrozen[fit_incr][2] -= (domain->boxhi[2] - domain->boxlo[2]);
+          }
         }
         fit_incr++;
       }
@@ -3787,6 +3861,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
       for (int j = 0; j < 3; j++)
         rotmat[i][j] = superposer.R[i][j];
     memory->destroy(xfrozen);
+    memory->destroy(oxfrozen);
     memory->destroy(xmobile);
   }
   MPI_Allreduce(MPI_IN_PLACE,&fitroot,1,MPI_INT,MPI_SUM,world);
