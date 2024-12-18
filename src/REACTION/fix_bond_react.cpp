@@ -3776,6 +3776,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         iatom = atom->map(my_update_mega_glove[ipre+1][iupdate]);
         if (iref == -1) iref = iatom;
         iatom = domain->closest_image(iref,iatom);
+        molinit = atom->molecule[iatom];
 
         for (int k = 0; k < 3; k++) {
           xfrozen[fit_incr][k] = x[iatom][k];
@@ -3986,11 +3987,16 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
 
         // locally update mega_glove
         my_update_mega_glove[preID][iupdate] = myaddatom.tag;
-
+        
+        int n = atom->nlocal - 1;
         // !! could do better job choosing mol ID for added atoms
         if (atom->molecule_flag) {
           if (twomol->moleculeflag) {
-            myaddatom.molecule = maxmol_all + twomol->molecule[m];
+            if (twomol->molecule[m] > 0) {
+              myaddatom.molecule = twomol->molecule[m];
+            } else {
+              myaddatom.molecule = molinit;
+            }
           } else {
             myaddatom.molecule = maxmol_all + 1;
           }
@@ -3998,20 +4004,27 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
 
         myaddatom.mask = 1 | groupbit;
         myaddatom.image = imageflags[m];
+        // Save polymerisation / nucleation time to atom variable
 
         // guess a somewhat reasonable initial velocity based on reaction site
         // further control is possible using bond_react_MASTER_group
         // compute |velocity| corresponding to a given temperature t, using specific atom's mass
+        // Chris 12/10/2023: Replacing scaling factor of velocities for the right one: sqrt(12 kT / m)
         myaddatom.rmass = atom->rmass ? twomol->rmass[m] : atom->mass[twomol->type[m]];
-        double vtnorm = sqrt(t / (force->mvv2e / (dimension * force->boltz)) / myaddatom.rmass);
         double myv[3];
-        myv[0] = random[rxnID]->uniform();
-        myv[1] = random[rxnID]->uniform();
-        myv[2] = random[rxnID]->uniform();
-        double vnorm = sqrt(myv[0]*myv[0] + myv[1]*myv[1] + myv[2]*myv[2]);
-        myaddatom.v[0] = myv[0]/vnorm*vtnorm;
-        myaddatom.v[1] = myv[1]/vnorm*vtnorm;
-        myaddatom.v[2] = myv[2]/vnorm*vtnorm;
+        double vtnorm = sqrt( ( 12 * t * force->boltz ) / ( myaddatom.rmass * force->mvv2e ) );
+        myv[0] = vtnorm*(0.5-(random[rxnID]->uniform()));     // Chris 21/07/2023 added "0.5-"
+        myv[1] = vtnorm*(0.5-(random[rxnID]->uniform()));     // Chris 21/07/2023 added "0.5-"
+        if (dimension < 3) {
+          myv[2] = 0.0;
+        }
+        else {
+          myv[2] = vtnorm*(0.5-(random[rxnID]->uniform()));     // Chris 21/07/2023 added "0.5-"
+        }
+        myaddatom.v[0] = myv[0];
+        myaddatom.v[1] = myv[1];
+        myaddatom.v[2] = myv[2];
+
         addatoms.push_back(myaddatom);
       }
       // globally update mega_glove and equivalences
