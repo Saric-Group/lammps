@@ -146,7 +146,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   status = PROCEED;
 
   // reaction functions used by 'custom' constraint
-  nrxnfunction = 3;
+  nrxnfunction = 4;
   rxnfunclist.resize(nrxnfunction);
   peratomflag.resize(nrxnfunction);
   rxnfunclist[0] = "rxnsum";
@@ -155,6 +155,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   peratomflag[1] = 1;
   rxnfunclist[2] = "rxnbond";
   peratomflag[2] = 0;
+  rxnfunclist[3] = "rxndiffIvan";
+  peratomflag[3] = 1;
   nvvec = 0;
   ncustomvars = 0;
   vvec = nullptr;
@@ -2469,8 +2471,41 @@ double FixBondReact::rxnfunction(const std::string& rxnfunc, const std::string& 
     }
   }
 
+  if (rxnfunc == "rxndiffIvan") {
+    if (fragid == "all") {
+      error->one(FLERR,"Bond/react: Molecule fragment "
+                              "in rxndiffIvan not specified");
+    } else {
+      int iatom1, iatom2;
+      for (int i = 0; i < onemol->natoms; i++) {
+        if (onemol->fragmentmask[ifrag][i]) {
+          iatom = atom->map(glove[i][1]);
+          // printf("i=%d iatom=%d var=%g; ", i, iatom, vvec[iatom][ivar]);
+          if (nsum == 0) {
+            iatom1 = iatom;
+            sumvvec += vvec[iatom][ivar];
+            nsum++;
+          }
+          else if (nsum==1) {
+            iatom2 = iatom;
+            sumvvec -= vvec[iatom][ivar];
+            nsum++;
+          }
+          else {
+            error->one(FLERR,"Bond/react: Molecule fragment "
+                              "in rxndiffIvan must contain exactly 2 atoms");
+          }
+        }
+      //if (iatom1>iatom2)
+      //  sumvvec = -sumvvec
+      }
+    // printf("nsum=%d sumvvec=%g.\n", nsum, sumvvec);
+    }
+  }
+
   if (rxnfunc == "rxnsum") return sumvvec;
   if (rxnfunc == "rxnave") return sumvvec/nsum;
+  if (rxnfunc == "rxndiffIvan") return sumvvec;
   return 0.0;
 }
 
