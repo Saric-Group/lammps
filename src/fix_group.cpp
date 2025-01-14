@@ -110,6 +110,8 @@ FixGroup::~FixGroup()
 int FixGroup::setmask()
 {
   int mask = 0;
+  mask |= POST_INTEGRATE;
+  mask |= POST_INTEGRATE_RESPA;
   return mask;
 }
 
@@ -163,7 +165,7 @@ void FixGroup::setup(int /*vflag*/)
 
 /* ---------------------------------------------------------------------- */
 
-void FixGroup::post_force(int /*vflag*/)
+void FixGroup::post_integrate()
 {
   // only assign atoms to group on steps that are multiples of nevery
 
@@ -172,9 +174,9 @@ void FixGroup::post_force(int /*vflag*/)
 
 /* ---------------------------------------------------------------------- */
 
-void FixGroup::post_force_respa(int vflag, int ilevel, int /*iloop*/)
+void FixGroup::post_integrate_respa(int vflag, int ilevel)
 {
-  if (ilevel == nlevels_respa - 1) post_force(vflag);
+  if (ilevel == nlevels_respa - 1) post_integrate();
 }
 
 /* ---------------------------------------------------------------------- */
