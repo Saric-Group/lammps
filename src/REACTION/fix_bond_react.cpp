@@ -443,8 +443,13 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
             else if (strcmp(arg[iarg+1],"yes") == 0) modify_create_nucrand[rxn] = 1; // random orientation
             else if (strcmp(arg[iarg+1],"xor") == 0) modify_create_nucrand[rxn] = 0; // positive orientation in X
             else if (strcmp(arg[iarg+1],"mod") == 0) {
+              error->all(FLERR, "Command 'mod' has been deactivated.");
               modify_create_nucrand[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
               iarg += 1;
+            }
+            else if (strcmp(arg[iarg+1], "cylinder") == 0){
+                modify_create_nucrand[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp);; // random orientation within a cylinder of radius R
+                iarg += 1;
             }
             iarg += 2;
           } else if (strcmp(arg[iarg],"overlap") == 0) {
@@ -3848,7 +3853,26 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             xfrozen[fit_incr][2] = xfrozen[0][2];
           }
         }
-        else if (modify_create_nucrand[rxnID] > 1) { // Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
+        else if (modify_create_nucrand[rxnID] > 1) {
+          // randomly place particles on cylinder
+          // cylinder radius supplied in modify_create_nucrand[rxnID]
+          // constant axis is y
+          if (fit_incr == 0) { 
+            // random position for first particle
+            double phi = 2*M_PI*random[rxnID]->uniform(); // random angle on cylinder
+            double y = (domain->boxhi[1] - domain->boxlo[1]) * (random[rxnID]->uniform()-0.5); // random y position
+
+            xfrozen[fit_incr][0] = modify_create_nucrand[rxnID]*cos(phi)+0.0;
+            xfrozen[fit_incr][1] = y;
+            xfrozen[fit_incr][2] = modify_create_nucrand[rxnID]*sin(phi)+0.0;
+          } else {
+            // other particles! along y-axis for now, TODO: properly place other particles on cylinder
+            xfrozen[fit_incr][0] = xfrozen[0][0];
+            xfrozen[fit_incr][1] = xfrozen[0][0] + (float)fit_incr;
+            xfrozen[fit_incr][2] = xfrozen[0][2];
+          }
+          // Chris' 'mod' command, deactivated for cylindrical creation
+          /* // Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
           double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
           if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID] - Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
             xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
@@ -3861,8 +3885,8 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
           else {
             xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(ang);
             xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
-            xfrozen[fit_incr][2] = 0.0;
-          }
+            xfrozen[fit_incr][2] = 0.0; 
+          } */
         }
         // New boundary implementation, without using the closest_image() function from domain.cpp, which sometimes returns the wrong ID, likely due to the resetting of molecules IDs as new particles are created (part of the fix_bond_react.cpp)
         // Chris - 20/02/2023
