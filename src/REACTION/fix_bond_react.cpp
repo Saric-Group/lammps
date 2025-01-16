@@ -3862,9 +3862,9 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             double phi = 2*M_PI*random[rxnID]->uniform(); // random angle on cylinder
             double y = (domain->boxhi[1] - domain->boxlo[1]) * (random[rxnID]->uniform()-0.5); // random y position
 
-            xfrozen[fit_incr][0] = modify_create_nucrand[rxnID]*cos(phi)+0.0;
+            xfrozen[fit_incr][0] = modify_create_nucrand[rxnID]*cos(phi);
             xfrozen[fit_incr][1] = y;
-            xfrozen[fit_incr][2] = modify_create_nucrand[rxnID]*sin(phi)+0.0;
+            xfrozen[fit_incr][2] = modify_create_nucrand[rxnID]*sin(phi);
           } else {
             // other particles! along y-axis for now, TODO: properly place other particles on cylinder
             xfrozen[fit_incr][0] = xfrozen[0][0];
@@ -3916,10 +3916,23 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         fit_incr++;
       }
     }
+    std::vector<std::vector<float>> view_xfrozen(n2superpose, std::vector<float>(3));
+    for (int i = 0; i < n2superpose; i++) {
+      for (int j = 0; j < 3; j++) {
+        view_xfrozen[i][j] = xfrozen[i][j];
+      }
+    }
     superposer.Superpose(xfrozen, xmobile);
     for (int i = 0; i < 3; i++)
       for (int j = 0; j < 3; j++)
         rotmat[i][j] = superposer.R[i][j];
+    
+    for (int i = 0; i < n2superpose; i++) {
+      for (int j = 0; j < 3; j++) {
+        view_xfrozen[i][j] = xfrozen[i][j];
+      }
+    }
+
     memory->destroy(xfrozen);
     memory->destroy(oxfrozen);
     memory->destroy(xmobile);
