@@ -3868,7 +3868,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
           } else {
             // other particles! along y-axis for now, TODO: properly place other particles on cylinder
             xfrozen[fit_incr][0] = xfrozen[0][0];
-            xfrozen[fit_incr][1] = xfrozen[0][0] + (float)fit_incr;
+            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr;
             xfrozen[fit_incr][2] = xfrozen[0][2];
           }
           // Chris' 'mod' command, deactivated for cylindrical creation
