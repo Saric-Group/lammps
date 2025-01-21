@@ -205,6 +205,7 @@ class FixBondReact : public Fix {
                      const std::string &);    // eval rxn_sum and rxn_ave
   void get_atoms2bond(int);
   int get_chirality(double[12]);              // get handedness given an ordered set of coordinates
+  int random_orientation_cylinder(int, double*, double*)
 
   void open(char *);
   void readline(char *);
