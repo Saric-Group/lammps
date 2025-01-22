@@ -3870,9 +3870,9 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             double* shift = new double[3];
             random_orientation_cylinder(rxnID, shift, xfrozen[0]);
 
-            xfrozen[fit_incr][0] = xfrozen[0][0];
-            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr;
-            xfrozen[fit_incr][2] = xfrozen[0][2];
+            xfrozen[fit_incr][0] = xfrozen[0][0] + shift[0];
+            xfrozen[fit_incr][1] = xfrozen[0][1] + shift[1];
+            xfrozen[fit_incr][2] = xfrozen[0][2] + shift[2];
 
             delete[] shift;
           }
@@ -4134,6 +4134,7 @@ used for random direction in nucleation on cylinder
 
 int FixBondReact::random_orientation_cylinder(int rxnID, double *out_vec, double* cylinder_point)
 {
+  // TODO: this function allocates a lot of memory, optimise to use preallocated variables
   double phi = 2*M_PI*random[rxnID]->uniform(); // random angle on cylinder
 
   // generate the normal vector of this point on the cylinder
@@ -4141,13 +4142,27 @@ int FixBondReact::random_orientation_cylinder(int rxnID, double *out_vec, double
   normal_vec[0] = cylinder_point[0];
   normal_vec[1] = 0;
   normal_vec[2] = cylinder_point[2];
+  double norm = 1./sqrt(normal_vec[0]*normal_vec[0] + normal_vec[1]*normal_vec[1] + normal_vec[2]*normal_vec[2]);
+  for(uint i=0;i<3;i++) normal_vec[i] *= norm;
 
   // make a trial vector in y direction to rotate
-  out_vec[0] = 0;
-  out_vec[1] = 1;
-  out_vec[2] = 0;
+  double* buff_vec = new double[3];
+  buff_vec[0] = 0;
+  buff_vec[1] = 1;
+  buff_vec[2] = 0;
+
+  // now use shortened version of Rodrigues' rotation formula (https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula)
+  // compute (v cos(phi)) + (k x v sin(phi))
+  out_vec[0] = buff_vec[0] * cos(phi) + (normal_vec[1] * buff_vec[2] - normal_vec[2] * buff_vec[1]) * sin(phi);
+  out_vec[1] = buff_vec[1] * cos(phi) + (normal_vec[2] * buff_vec[0] - normal_vec[0] * buff_vec[2]) * sin(phi);
+  out_vec[2] = buff_vec[2] * cos(phi) + (normal_vec[0] * buff_vec[1] - normal_vec[1] * buff_vec[0]) * sin(phi);
   
+  // technically this shouldn't be necessary since both vectors are unit vectors
+  norm = 1./sqrt(out_vec[0]*out_vec[0] + out_vec[1]*out_vec[1] + out_vec[2]*out_vec[2]);
+  for(uint i=0;i<3;i++) out_vec[i] *= norm;
+  norm = sqrt(out_vec[0]*out_vec[0] + out_vec[1]*out_vec[1] + out_vec[2]*out_vec[2]);
   delete [] normal_vec;
+  delete [] buff_vec;
   return 1;
 }
 
