@@ -3916,22 +3916,10 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         fit_incr++;
       }
     }
-    std::vector<std::vector<float>> view_xfrozen(n2superpose, std::vector<float>(3));
-    for (int i = 0; i < n2superpose; i++) {
-      for (int j = 0; j < 3; j++) {
-        view_xfrozen[i][j] = xfrozen[i][j];
-      }
-    }
     superposer.Superpose(xfrozen, xmobile);
     for (int i = 0; i < 3; i++)
       for (int j = 0; j < 3; j++)
         rotmat[i][j] = superposer.R[i][j];
-    
-    for (int i = 0; i < n2superpose; i++) {
-      for (int j = 0; j < 3; j++) {
-        view_xfrozen[i][j] = xfrozen[i][j];
-      }
-    }
 
     memory->destroy(xfrozen);
     memory->destroy(oxfrozen);
