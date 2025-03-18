@@ -78,6 +78,8 @@ class FixBondReact : public Fix {
   int *create_atoms_flag;
   int *modify_create_fragid;
   int *modify_create_nucrand;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+  double *modify_create_nuccyl_rad; // added for cylinder nucleation
+  double *modify_create_nuccyl_mod; // added for cylinder nucleation
   double *overlapsq;
   int *molecule_keyword;
   int maxnconstraints;
