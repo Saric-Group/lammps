@@ -278,6 +278,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     create_atoms_flag[i] = 0;
     modify_create_fragid[i] = -1;
     modify_create_nucrand[i] = -1;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+    modify_create_nuccyl_rad[i] = -1; // added for cylinder nucleation
+    modify_create_nuccyl_mod[i] = -1; // added for cylinder nucleation
     overlapsq[i] = 0.0;
     molecule_keyword[i] = OFF;
     nconstraints[i] = 0;
