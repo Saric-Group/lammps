@@ -298,6 +298,11 @@ double PairYLZ::init_one(int i, int j)
   epsilon[j][i] = epsilon[i][j];
   sigma[j][i] = sigma[i][j];
   zeta[j][i] = zeta[i][j];
+  /* ADAM PRADA change as identified by MAITANE MUNOZ-BASAGOITI*/
+  /*vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv*/
+  cut[j][i] = cut[i][j];
+  /*^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^*/
+  /* ADAM PRADA change as identified by MAITANE MUNOZ-BASAGOITI*/
   mu[j][i] = mu[i][j];
   beta[j][i] = beta[i][j];
 
