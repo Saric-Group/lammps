@@ -1141,13 +1141,12 @@ struct AtomVecSphereKokkos_PackBorderVel {
     _buf(i,6) = _radius(j);
     _buf(i,7) = _rmass(j);
     if (DEFORM_VREMAP) {
-      if (_mask(i) & _deform_groupbit) {
+      if (_mask(j) & _deform_groupbit) {
         _buf(i,8) = _v(j,0) + _dvx;
         _buf(i,9) = _v(j,1) + _dvy;
         _buf(i,10) = _v(j,2) + _dvz;
       }
-    }
-    else {
+    } else {
       _buf(i,8) = _v(j,0);
       _buf(i,9) = _v(j,1);
       _buf(i,10) = _v(j,2);

@@ -161,6 +161,13 @@ void FixDrude::build_drudeid() {
              (char *) drude_vec.data(),
              3, ring_search_drudeid, nullptr, (void *)this, 1);
   delete [] partner_set;
+  // Check if all cores have a drude particle attached
+  for (int i=0; i<nlocal; i++) {
+    if (drudetype[type[i]] == CORE_TYPE) {
+      if (drudeid[i] == 0)
+        error->one(FLERR, "Core atom ID {} has no drude atom", atom->tag[i]);
+    }
+  }
 }
 
 /* ----------------------------------------------------------------------

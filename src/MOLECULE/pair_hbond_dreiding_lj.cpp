@@ -82,7 +82,7 @@ void PairHbondDreidingLJ::compute(int eflag, int vflag)
   tagint tagprev;
   double delx,dely,delz,rsq,rsq1,rsq2,r1,r2;
   double factor_hb,force_angle,force_kernel,evdwl,eng_lj,ehbond,force_switch;
-  double c,s,a,b,ac,a11,a12,a22,vx1,vx2,vy1,vy2,vz1,vz2,d;
+  double c,s,a,b,d,ac,a11,a12,a22,vx1,vx2,vy1,vy2,vz1,vz2;
   double fi[3],fj[3],delr1[3],delr2[3];
   double r2inv,r10inv;
   double switch1,switch2;
@@ -186,14 +186,11 @@ void PairHbondDreidingLJ::compute(int eflag, int vflag)
 
             r2inv = 1.0/rsq;
             r10inv = r2inv*r2inv*r2inv*r2inv*r2inv;
-            force_kernel = r10inv*(pm.lj1*r2inv - pm.lj2)*r2inv *
-              powint(c,pm.ap);
-            force_angle = pm.ap * r10inv*(pm.lj3*r2inv - pm.lj4) *
-              powint(c,pm.ap-1)*s;
+            force_kernel = r10inv*(pm.lj1*r2inv - pm.lj2)*r2inv * powint(c,pm.ap);
+            force_angle = pm.ap * r10inv*(pm.lj3*r2inv - pm.lj4) * powint(c,pm.ap-1)*s;
+            force_switch = 0.0;
 
             eng_lj = r10inv*(pm.lj3*r2inv - pm.lj4);
-
-            force_switch=0.0;
 
             if (rsq > pm.cut_innersq) {
               switch1 = (pm.cut_outersq-rsq) * (pm.cut_outersq-rsq) *
@@ -396,14 +393,14 @@ void PairHbondDreidingLJ::init_style()
   //   and computing forces on A,H which may be on different procs
 
   if (atom->molecular == Atom::ATOMIC)
-    error->all(FLERR,"Pair style hbond/dreiding requires molecular system");
+    error->all(FLERR,"Pair style hbond/dreiding/lj requires molecular system");
   if (atom->tag_enable == 0)
-    error->all(FLERR,"Pair style hbond/dreiding requires atom IDs");
+    error->all(FLERR,"Pair style hbond/dreiding/lj requires atom IDs");
   if (atom->map_style == Atom::MAP_NONE)
-    error->all(FLERR,"Pair style hbond/dreiding requires an atom map, "
+    error->all(FLERR,"Pair style hbond/dreiding/lj requires an atom map, "
                "see atom_modify");
   if (force->newton_pair == 0)
-    error->all(FLERR,"Pair style hbond/dreiding requires newton pair on");
+    error->all(FLERR,"Pair style hbond/dreiding/lj requires newton pair on");
 
   // set donor[M]/acceptor[M] if any atom of type M is a donor/acceptor
 
@@ -419,7 +416,7 @@ void PairHbondDreidingLJ::init_style()
           acceptor[j] = 1;
         }
 
-  if (!anyflag) error->all(FLERR,"No pair hbond/dreiding coefficients set");
+  if (!anyflag) error->all(FLERR,"No pair hbond/dreiding/lj coefficients set");
 
   // set additional param values
   // offset is for LJ only, angle term is not included

@@ -46,7 +46,7 @@ using namespace LAMMPS_NS;
 /* ---------------------------------------------------------------------- */
 
 PairMLIAP::PairMLIAP(LAMMPS *lmp) :
-    Pair(lmp), map(nullptr), model(nullptr), descriptor(nullptr), data(nullptr)
+    Pair(lmp), model(nullptr), descriptor(nullptr), data(nullptr)
 {
   single_enable = 0;
   restartinfo = 0;
@@ -54,8 +54,6 @@ PairMLIAP::PairMLIAP(LAMMPS *lmp) :
   manybody_flag = 1;
   is_child = false;
   centroidstressflag = CENTROID_NOTAVAIL;
-  model=nullptr;
-  descriptor=nullptr;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -73,8 +71,8 @@ PairMLIAP::~PairMLIAP()
   if (allocated) {
     memory->destroy(setflag);
     memory->destroy(cutsq);
-    memory->destroy(cutghost);
     memory->destroy(map);
+    memory->destroy(cutghost);
   }
 }
 
@@ -126,8 +124,8 @@ void PairMLIAP::allocate()
 
   memory->create(setflag,n+1,n+1,"pair:setflag");
   memory->create(cutsq,n+1,n+1,"pair:cutsq");
-  memory->create(cutghost,n+1,n+1,"pair:cutghost");
   memory->create(map,n+1,"pair:map");
+  if (ghostneigh) memory->create(cutghost, n+1, n+1, "pair:cutghost");
 }
 
 /* ----------------------------------------------------------------------
@@ -358,8 +356,9 @@ void PairMLIAP::init_style()
 double PairMLIAP::init_one(int i, int j)
 {
   if (setflag[i][j] == 0) error->all(FLERR,"All pair coeffs are not set");
+
   double cutmax = sqrt(descriptor->cutsq[map[i]][map[j]]);
-  cutghost[i][j] = cutghost[j][i] = 2.0 * cutmax + neighbor->skin;
+  if (ghostneigh) cutghost[i][j] =  cutghost[j][i] = cutmax;
   return cutmax;
 }
 
@@ -374,7 +373,6 @@ double PairMLIAP::memory_usage()
   int n = atom->ntypes+1;
   bytes += (double)n*n*sizeof(int);            // setflag
   bytes += (double)n*n*sizeof(int);            // cutsq
-  bytes += (double)n*n*sizeof(int);            // cutghost
   bytes += (double)n*sizeof(int);              // map
   bytes += descriptor->memory_usage(); // Descriptor object
   bytes += model->memory_usage();      // Model object

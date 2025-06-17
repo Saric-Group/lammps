@@ -133,9 +133,11 @@ void CommBrick::init()
 {
   Comm::init();
 
-  int bufextra_old = bufextra;
   init_exchange();
-  if (bufextra > bufextra_old) grow_send(maxsend+bufextra,2);
+  if (bufextra > bufextra_max) {
+    grow_send(maxsend+bufextra,2);
+    bufextra_max = bufextra;
+  }
 
   // memory for multi style communication
   // allocate in setup
@@ -207,8 +209,8 @@ void CommBrick::setup()
 
   double cut = get_comm_cutoff();
   if ((cut == 0.0) && (me == 0))
-    error->warning(FLERR,"Communication cutoff is 0.0. No ghost atoms "
-                   "will be generated. Atoms may get lost.");
+    error->warning(FLERR,"Communication cutoff is 0.0. No ghost atoms will be generated. "
+                   "Energies and forces may be wrong and atoms may get lost.");
 
   if (mode == Comm::MULTI) {
     double **cutcollectionsq = neighbor->cutcollectionsq;
@@ -672,9 +674,11 @@ void CommBrick::exchange()
   // only need to reset if a fix can dynamically add to size of single atom
 
   if (maxexchange_fix_dynamic) {
-    int bufextra_old = bufextra;
     init_exchange();
-    if (bufextra > bufextra_old) grow_send(maxsend+bufextra,2);
+    if (bufextra > bufextra_max) {
+      grow_send(maxsend+bufextra,2);
+      bufextra_max = bufextra;
+    }
   }
 
   // subbox bounds for orthogonal or triclinic

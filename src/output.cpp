@@ -222,7 +222,7 @@ void Output::setup(int memflag)
 
   if (ndump && update->restrict_output == 0) {
     next_dump_any = next_time_dump_any = MAXBIGINT;
-
+    int mode_dump_any = 0;
     for (int idump = 0; idump < ndump; idump++) {
 
       // wrap step dumps that invoke computes or do variable eval with clear/add
@@ -279,10 +279,13 @@ void Output::setup(int memflag)
         else modify->addstep_compute_all(next_dump[idump]);
       }
 
-      if (mode_dump[idump] && (dump[idump]->clearstep || var_dump[idump]))
+      if (mode_dump[idump] && (dump[idump]->clearstep || var_dump[idump])) {
         next_time_dump_any = MIN(next_time_dump_any,next_dump[idump]);
+        mode_dump_any = 1;
+      }
       next_dump_any = MIN(next_dump_any,next_dump[idump]);
     }
+    if (mode_dump_any) modify->addstep_compute(next_time_dump_any);
 
     // if no dumps, set next_dump_any to last+1 so will not influence next
 
@@ -373,11 +376,11 @@ void Output::write(bigint ntimestep)
   //   can't remove an uneeded addstep from a compute, b/c don't know
   //     what other command may have added it
 
+  int mode_dump_any = 0;  // any variable time or clearstep dump
   if (next_dump_any == ntimestep) {
     next_dump_any = next_time_dump_any = MAXBIGINT;
 
     for (int idump = 0; idump < ndump; idump++) {
-
       if (next_dump[idump] == ntimestep) {
         if (last_dump[idump] == ntimestep) continue;
 
@@ -397,11 +400,15 @@ void Output::write(bigint ntimestep)
           modify->addstep_compute(next_dump[idump]);
       }
 
-      if (mode_dump[idump] && (dump[idump]->clearstep || var_dump[idump]))
+      if (mode_dump[idump] && (dump[idump]->clearstep || var_dump[idump])) {
+        mode_dump_any = 1;
         next_time_dump_any = MIN(next_time_dump_any,next_dump[idump]);
+      }
       next_dump_any = MIN(next_dump_any,next_dump[idump]);
     }
   }
+  // trigger computes for any time based or variable step dumps
+  if (mode_dump_any) modify->addstep_compute(next_time_dump_any);
 
   // next_restart does not force output on last step of run
   // for toggle = 0, replace "*" with current timestep in restart filename

@@ -143,6 +143,8 @@ void DisplaceAtoms::command(int narg, char **arg)
     else if (strcmp(arg[5],"y") == 0) coord_dim = 1;
     else if (strcmp(arg[5],"z") == 0) coord_dim = 2;
     else error->all(FLERR,"Illegal displace_atoms ramp command");
+    if ((domain->dimension == 2) && (d_dim == 2))
+      error->all(FLERR,"Must not displace atoms in z-direction with 2d system");
 
     double coord_lo,coord_hi;
     if (coord_dim == 0) {
@@ -184,17 +186,20 @@ void DisplaceAtoms::command(int narg, char **arg)
     double dz = zscale*utils::numeric(FLERR,arg[4],false,lmp);
     int seed = utils::inumeric(FLERR,arg[5],false,lmp);
     if (seed <= 0) error->all(FLERR,"Illegal displace_atoms random command");
+    if ((domain->dimension == 2) && (dz != 0.0))
+      error->all(FLERR,"Must not displace atoms in z-direction with 2d system");
 
     double **x = atom->x;
     int *mask = atom->mask;
     int nlocal = atom->nlocal;
+    int dim = domain->dimension;
 
     for (i = 0; i < nlocal; i++) {
       if (mask[i] & groupbit) {
         random->reset(seed,x[i]);
         x[i][0] += dx * 2.0*(random->uniform()-0.5);
         x[i][1] += dy * 2.0*(random->uniform()-0.5);
-        x[i][2] += dz * 2.0*(random->uniform()-0.5);
+        if (dim == 3) x[i][2] += dz * 2.0*(random->uniform()-0.5);
       }
     }
 

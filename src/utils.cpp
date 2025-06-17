@@ -20,7 +20,9 @@
 #include "domain.h"
 #include "error.h"
 #include "fix.h"
+#ifndef FMT_STATIC_THOUSANDS_SEPARATOR
 #include "fmt/chrono.h"
+#endif
 #include "input.h"
 #include "label_map.h"
 #include "memory.h"
@@ -32,6 +34,8 @@
 
 #include <cctype>
 #include <cerrno>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <stdexcept>
@@ -397,7 +401,7 @@ double utils::numeric(const char *file, int line, const std::string &str, bool d
       lmp->error->all(file, line, msg);
   }
 
-  double rv = 0;
+  double rv = 0.0;
   auto msg = fmt::format("Floating point number {} in input script or data file is invalid", buf);
   try {
     std::size_t endpos;
@@ -414,6 +418,12 @@ double utils::numeric(const char *file, int line, const std::string &str, bool d
     else
       lmp->error->all(file, line, msg);
   } catch (std::out_of_range const &) {
+    // could be a denormal number. try again with std::strtod().
+    char *end;
+    rv = std::strtod(buf.c_str(), &end);
+    // return value if denormal
+    if ((rv != 0.0) && (rv > -HUGE_VAL) && (rv < HUGE_VAL)) return rv;
+
     msg = fmt::format("Floating point number {} in input script or data file is out of range", buf);
     if (do_abort)
       lmp->error->one(file, line, msg);
@@ -1807,8 +1817,15 @@ int utils::date2num(const std::string &date)
 std::string utils::current_date()
 {
   time_t tv = time(nullptr);
+#if defined(FMT_STATIC_THOUSANDS_SEPARATOR)
+  char outstr[200];
+  struct tm *today = localtime(&tv);
+  strftime(outstr, 200, "%Y-%m-%d", today);
+  return std::string(outstr);
+#else
   std::tm today = fmt::localtime(tv);
   return fmt::format("{:%Y-%m-%d}", today);
+#endif
 }
 
 /* ----------------------------------------------------------------------

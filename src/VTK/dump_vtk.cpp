@@ -1540,9 +1540,8 @@ int DumpVTK::parse_fields(int narg, char **arg)
   name[Z] = "z";
 
   // customize by adding to if statement
-  int i;
-  for (int iarg = 5; iarg < narg; iarg++) {
-    i = iarg-5;
+
+  for (int iarg = 0; iarg < narg; iarg++) {
 
     if (strcmp(arg[iarg],"id") == 0) {
       pack_choice[ID] = &DumpVTK::pack_id;
@@ -1766,7 +1765,7 @@ int DumpVTK::parse_fields(int narg, char **arg)
       int n,flag,cols;
       ArgInfo argi(arg[iarg],ArgInfo::COMPUTE|ArgInfo::FIX|ArgInfo::VARIABLE
                    |ArgInfo::DNAME|ArgInfo::INAME);
-      argindex[ATTRIBUTES+i] = argi.get_index1();
+      argindex[ATTRIBUTES+iarg] = argi.get_index1();
       auto aname = argi.get_name();
 
       switch (argi.get_type()) {
@@ -1779,8 +1778,8 @@ int DumpVTK::parse_fields(int narg, char **arg)
       // if no trailing [], then arg is set to 0, else arg is int between []
 
       case ArgInfo::COMPUTE:
-        pack_choice[ATTRIBUTES+i] = &DumpVTK::pack_compute;
-        vtype[ATTRIBUTES+i] = Dump::DOUBLE;
+        pack_choice[ATTRIBUTES+iarg] = &DumpVTK::pack_compute;
+        vtype[ATTRIBUTES+iarg] = Dump::DOUBLE;
 
         n = modify->find_compute(aname);
         if (n < 0) error->all(FLERR,"Could not find dump vtk compute ID: {}",aname);
@@ -1794,16 +1793,16 @@ int DumpVTK::parse_fields(int narg, char **arg)
             argi.get_index1() > modify->compute[n]->size_peratom_cols)
           error->all(FLERR,"Dump vtk compute {} vector is accessed out-of-range",aname);
 
-        field2index[ATTRIBUTES+i] = add_compute(aname);
-        name[ATTRIBUTES+i] = arg[iarg];
+        field2index[ATTRIBUTES+iarg] = add_compute(aname);
+        name[ATTRIBUTES+iarg] = arg[iarg];
         break;
 
       // fix value = f_ID
       // if no trailing [], then arg is set to 0, else arg is between []
 
       case ArgInfo::FIX:
-        pack_choice[ATTRIBUTES+i] = &DumpVTK::pack_fix;
-        vtype[ATTRIBUTES+i] = Dump::DOUBLE;
+        pack_choice[ATTRIBUTES+iarg] = &DumpVTK::pack_fix;
+        vtype[ATTRIBUTES+iarg] = Dump::DOUBLE;
 
         n = modify->find_fix(aname);
         if (n < 0) error->all(FLERR,"Could not find dump vtk fix ID: {}",aname);
@@ -1817,69 +1816,69 @@ int DumpVTK::parse_fields(int narg, char **arg)
             argi.get_index1() > modify->fix[n]->size_peratom_cols)
           error->all(FLERR,"Dump vtk fix {} vector is accessed out-of-range",aname);
 
-        field2index[ATTRIBUTES+i] = add_fix(aname);
-        name[ATTRIBUTES+i] = arg[iarg];
+        field2index[ATTRIBUTES+iarg] = add_fix(aname);
+        name[ATTRIBUTES+iarg] = arg[iarg];
         break;
 
       // variable value = v_name
 
       case ArgInfo::VARIABLE:
-        pack_choice[ATTRIBUTES+i] = &DumpVTK::pack_variable;
-        vtype[ATTRIBUTES+i] = Dump::DOUBLE;
+        pack_choice[ATTRIBUTES+iarg] = &DumpVTK::pack_variable;
+        vtype[ATTRIBUTES+iarg] = Dump::DOUBLE;
 
         n = input->variable->find(aname);
         if (n < 0) error->all(FLERR,"Could not find dump vtk variable name {}",aname);
         if (input->variable->atomstyle(n) == 0)
           error->all(FLERR,"Dump vtk variable {} is not atom-style variable",aname);
 
-        field2index[ATTRIBUTES+i] = add_variable(aname);
-        name[ATTRIBUTES+i] = arg[iarg];
+        field2index[ATTRIBUTES+iarg] = add_variable(aname);
+        name[ATTRIBUTES+iarg] = arg[iarg];
         break;
 
       // custom per-atom floating point vector or array = d_ID d2_ID
 
       case ArgInfo::DNAME:
-        pack_choice[ATTRIBUTES+i] = &DumpVTK::pack_custom;
-        vtype[ATTRIBUTES+i] = Dump::DOUBLE;
+        pack_choice[ATTRIBUTES+iarg] = &DumpVTK::pack_custom;
+        vtype[ATTRIBUTES+iarg] = Dump::DOUBLE;
 
         n = atom->find_custom(aname,flag,cols);
 
         if (n < 0)
           error->all(FLERR,"Could not find custom per-atom property ID: {}", aname);
-        if (argindex[ATTRIBUTES+i] == 0) {
+        if (argindex[ATTRIBUTES+iarg] == 0) {
           if (!flag || cols)
             error->all(FLERR,"Property double vector {} for dump vtk does not exist",aname);
         } else {
           if (!flag || !cols)
             error->all(FLERR,"Property double array {} for dump vtk does not exist",aname);
-          if (argindex[ATTRIBUTES+i] > atom->dcols[n])
+          if (argindex[ATTRIBUTES+iarg] > atom->dcols[n])
             error->all(FLERR,"Dump vtk property array {} is accessed out-of-range",aname);
         }
-        field2index[ATTRIBUTES+i] = add_custom(aname,1);
-        name[ATTRIBUTES+i] = arg[iarg];
+        field2index[ATTRIBUTES+iarg] = add_custom(aname,1);
+        name[ATTRIBUTES+iarg] = arg[iarg];
         break;
 
       // custom per-atom integer vector or array = i_ID or i2_ID
 
       case ArgInfo::INAME:
-        pack_choice[ATTRIBUTES+i] = &DumpVTK::pack_custom;
-        vtype[ATTRIBUTES+i] = Dump::INT;
+        pack_choice[ATTRIBUTES+iarg] = &DumpVTK::pack_custom;
+        vtype[ATTRIBUTES+iarg] = Dump::INT;
 
         n = atom->find_custom(aname,flag,cols);
 
         if (n < 0)
           error->all(FLERR,"Could not find custom per-atom property ID: {}", aname);
-        if (argindex[ATTRIBUTES+i] == 0) {
+        if (argindex[ATTRIBUTES+iarg] == 0) {
           if (flag || cols)
             error->all(FLERR,"Property integer vector {} for dump vtk does not exist",aname);
         } else {
           if (flag || !cols)
             error->all(FLERR,"Property integer array {} for dump vtk does not exist",aname);
-          if (argindex[ATTRIBUTES+i] > atom->icols[n])
+          if (argindex[ATTRIBUTES+iarg] > atom->icols[n])
             error->all(FLERR,"Dump vtk property array {} is accessed out-of-range",aname);
         }
-        field2index[ATTRIBUTES+i] = add_custom(aname,0);
-        name[ATTRIBUTES+i] = arg[iarg];
+        field2index[ATTRIBUTES+iarg] = add_custom(aname,0);
+        name[ATTRIBUTES+iarg] = arg[iarg];
         break;
 
       // no match

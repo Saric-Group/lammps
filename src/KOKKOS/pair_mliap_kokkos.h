@@ -30,6 +30,8 @@ PairStyle(mliap/kk/host,PairMLIAPKokkos<LMPHostType>);
 #include "pair_kokkos.h"
 #include "kokkos_type.h"
 
+#include <variant>
+
 namespace LAMMPS_NS {
 
 template<class DeviceType>
@@ -39,21 +41,30 @@ public:
   typedef ArrayTypes<DeviceType> AT;
 
   PairMLIAPKokkos(class LAMMPS*);
-  ~PairMLIAPKokkos();
-  void settings(int narg, char ** arg);
-  void init_style();
+  ~PairMLIAPKokkos() override;
+  void settings(int narg, char ** arg) override;
+  void init_style() override;
 
-  void compute(int, int);
+  void compute(int, int) override;
   void e_tally(MLIAPData* data);
 
-  void allocate();
+  void allocate() override;
 
-  void coeff(int narg, char **arg);
+  void coeff(int narg, char **arg) override;
+
+  // Variables to store to/from pointers and types between
+  // forward_comm/reverse_comm and virutal functions. Ugly work-around which
+  // could be partially be removed by templating LAMMPS comms on float type
+  std::variant<float*, double*> copy_to, copy_from;
+  enum class COMM_TYPE {FLOAT=0, DOUBLE, UNSET} comm_type;
+  int vec_len;
+
   typename AT::t_x_array_randomread x;
   typename AT::t_x_array_randomread v;
   typename AT::t_f_array f;
   DAT::tdual_int_1d k_map;
   DAT::tdual_double_2d k_cutsq;
+  DAT::tdual_double_2d k_cutghost;
   DAT::tdual_int_2d k_setflag;
   DAT::tdual_efloat_1d k_eatom;
   DAT::tdual_double_2d k_vatom;

@@ -1679,9 +1679,7 @@ void Domain::remap_all()
   imageint *image = atom->image;
   int nlocal = atom->nlocal;
 
-  if (triclinic) x2lamda(nlocal);
   for (int i = 0; i < nlocal; i++) remap(x[i],image[i]);
-  if (triclinic) lamda2x(nlocal);
 }
 
 /* ----------------------------------------------------------------------

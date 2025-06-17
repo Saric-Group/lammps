@@ -198,7 +198,7 @@ ComputeReduce::ComputeReduce(LAMMPS *lmp, int narg, char **arg) :
 
   for (int iarg = nvalues; iarg < nargnew; iarg++) {
     if (strcmp(arg[iarg], "replace") == 0) {
-      if (iarg + 3 > narg) utils::missing_cmd_args(FLERR, mycmd + " replace", error);
+      if (iarg + 3 > nargnew) utils::missing_cmd_args(FLERR, mycmd + " replace", error);
       if (mode != MINN && mode != MAXX)
         error->all(FLERR, "Compute {} replace requires min or max mode", style);
       int col1 = utils::inumeric(FLERR, arg[iarg + 1], false, lmp) - 1;
@@ -213,10 +213,10 @@ ComputeReduce::ComputeReduce(LAMMPS *lmp, int narg, char **arg) :
       replace[col1] = col2;
       iarg += 2;
     } else if (strcmp(arg[iarg], "inputs") == 0) {
-      if (iarg + 2 > narg) utils::missing_cmd_args(FLERR, mycmd + " inputs", error);
+      if (iarg + 2 > nargnew) utils::missing_cmd_args(FLERR, mycmd + " inputs", error);
       if (strcmp(arg[iarg+1], "peratom") == 0) input_mode = PERATOM;
       else if (strcmp(arg[iarg+1], "local") == 0) input_mode = LOCAL;
-      iarg += 2;
+      iarg += 1;
     } else
       error->all(FLERR, "Unknown compute {} keyword: {}", style, arg[iarg]);
   }

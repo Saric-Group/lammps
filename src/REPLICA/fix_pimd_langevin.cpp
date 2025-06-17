@@ -510,7 +510,10 @@ void FixPIMDLangevin::setup(int vflag)
       nmpimd_transform(bufbeads, x, M_x2xp[universe->iworld]);
   } else if (method == PIMD) {
     inter_replica_comm(x);
-    spring_force();
+    if (cmode == SINGLE_PROC)
+      spring_force();
+    else if (cmode == MULTI_PROC)
+      error->universe_all(FLERR, "Method pimd only supports a single processor per bead");
   } else {
     error->universe_all(
         FLERR,

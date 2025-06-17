@@ -502,6 +502,8 @@ using CMake or Make.
                                       # chain.x, micelle2d.x, msi2lmp, phana,
                                       # stl_bin2txt
          -D BUILD_LAMMPS_GUI=value    # yes or no (default). Build LAMMPS-GUI
+         -D BUILD_WHAM=value          # yes (default). Download and build WHAM;
+                                      # only available for BUILD_LAMMPS_GUI=yes
 
       The generated binaries will also become part of the LAMMPS installation
       (see below).

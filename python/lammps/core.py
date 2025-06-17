@@ -1045,7 +1045,7 @@ class lammps(object):
     """
 
     tag = self.c_tagint(id)
-    return self.lib.lammps_map_atom(self.lmp, pointer(tag))
+    return self.lib.lammps_map_atom(self.lmp, byref(tag))
 
   # -------------------------------------------------------------------------
   # extract per-atom info datatype

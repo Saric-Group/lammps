@@ -280,8 +280,8 @@ void CommTiled::setup()
 
   double cut = get_comm_cutoff();
   if ((cut == 0.0) && (me == 0))
-    error->warning(FLERR,"Communication cutoff is 0.0. No ghost atoms "
-                   "will be generated. Atoms may get lost.");
+    error->warning(FLERR,"Communication cutoff is 0.0. No ghost atoms will be generated. "
+                   "Energies and forces may be wrong and atoms may get lost.");
 
   if (triclinic == 0) cutghost[0] = cutghost[1] = cutghost[2] = cut;
   else {
@@ -943,9 +943,11 @@ void CommTiled::exchange()
   // only need to reset if a fix can dynamically add to size of single atom
 
   if (maxexchange_fix_dynamic) {
-    int bufextra_old = bufextra;
     init_exchange();
-    if (bufextra > bufextra_old) grow_send(maxsend+bufextra,2);
+    if (bufextra > bufextra_max) {
+      grow_send(maxsend+bufextra,2);
+      bufextra = bufextra_max;
+    }
   }
 
   // domain properties used in exchange method and methods it calls
@@ -2466,7 +2468,8 @@ void CommTiled::deallocate_swap(int n)
     memory->destroy(sendbox_multi[i]);
     memory->destroy(sendbox_multiold[i]);
 
-    delete [] maxsendlist[i];
+    if (maxsendlist)
+      delete [] maxsendlist[i];
 
     if (sendlist && sendlist[i]) {
       for (int j = 0; j < nprocmax[i]; j++) memory->destroy(sendlist[i][j]);

@@ -175,7 +175,7 @@ FixSemiGrandCanonicalMC::FixSemiGrandCanonicalMC(LAMMPS *_lmp, int narg, char **
         targetConcentration[i] = utils::numeric(FLERR, arg[iarg], false, lmp);
         targetConcentration[1] -= targetConcentration[i];
       }
-      for (int i = 1; i <= atom->ntypes; i++, iarg++) {
+      for (int i = 1; i <= atom->ntypes; i++) {
         if ((targetConcentration[i] < 0.0) || (targetConcentration[i] > 1.0))
           error->all(FLERR, "Target concentration {} for species {} is out of range",
                      targetConcentration[i], i);

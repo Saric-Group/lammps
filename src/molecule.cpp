@@ -953,12 +953,12 @@ void Molecule::diameters(char *line)
     if (count[i] == 0)
       error->all(FLERR, "Atom {} missing in Diameters section of molecule file", i + 1);
     if (radius[i] < 0.0)
-      error->all(FLERR, "Invalid atom diameter {} for atom {} in molecule file", radius[i], i + 1);
+      error->all(FLERR, "Invalid atom diameter {} for atom {} in molecule file", radius[i] * 2.0 / sizescale, i + 1);
   }
 }
 
 /* ----------------------------------------------------------------------
-   read charges from file
+   read dipoles from file
 ------------------------------------------------------------------------- */
 
 void Molecule::dipoles(char *line)
@@ -977,9 +977,9 @@ void Molecule::dipoles(char *line)
         error->all(FLERR, "Invalid atom index in Dipoles section of molecule file");
 
       count[iatom]++;
-      mu[iatom][0] = values.next_double();
-      mu[iatom][1] = values.next_double();
-      mu[iatom][2] = values.next_double();
+      mu[iatom][0] = values.next_double() * sizescale;
+      mu[iatom][1] = values.next_double() * sizescale;
+      mu[iatom][2] = values.next_double() * sizescale;
     }
   } catch (TokenizerException &e) {
     error->all(FLERR, "Invalid line in Dipoles section of molecule file: {}\n{}", e.what(), line);
@@ -988,6 +988,12 @@ void Molecule::dipoles(char *line)
   for (int i = 0; i < natoms; i++) {
     if (count[i] == 0)
       error->all(FLERR, "Atom {} missing in Dipoles section of molecule file", i + 1);
+  }
+  if (domain->dimension == 2) {
+    for (int i = 0; i < natoms; i++)
+      if (mu[i][2] != 0.0)
+        error->all(FLERR, "Dipole moment z-component in molecule file for atom {} must be 0.0 for"
+                   " 2d-simulation", i + 1);
   }
 }
 
@@ -1021,7 +1027,7 @@ void Molecule::masses(char *line)
     if (count[i] == 0)
       error->all(FLERR, "Atom {} missing in Masses section of molecule file", i + 1);
     if (rmass[i] <= 0.0)
-      error->all(FLERR, "Invalid atom mass {} for atom {} in molecule file", radius[i], i + 1);
+      error->all(FLERR, "Invalid atom mass {} for atom {} in molecule file", rmass[i] / sizescale / sizescale / sizescale, i + 1);
   }
 }
 

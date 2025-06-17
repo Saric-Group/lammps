@@ -76,9 +76,11 @@ MLIAPModelPythonKokkos<DeviceType>::MLIAPModelPythonKokkos(LAMMPS *lmp, char *co
     PyList_Append(py_path, PY_STRING_FROM_STRING(potentials_path));
   }
   PyGILState_Release(gstate);
-  if (coefffilename) read_coeffs(coefffilename);
+  if (coefffilename) {
+    read_coeffs(coefffilename);
+    MLIAPModelKokkos<DeviceType>::set_k_coeffelem();
+  }
 
-  if (coefffilename) MLIAPModelKokkos<DeviceType>::set_k_coeffelem();
 
   nonlinearflag = 1;
 }

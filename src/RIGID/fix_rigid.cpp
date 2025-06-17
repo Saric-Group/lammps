@@ -119,7 +119,7 @@ FixRigid::FixRigid(LAMMPS *lmp, int narg, char **arg) :
     int nlocal = atom->nlocal;
     int custom_flag = strcmp(arg[3], "custom") == 0;
     if (custom_flag) {
-      if (narg < 5) utils::missing_cmd_args(FLERR, fmt::format("fix {} custom"), error);
+      if (narg < 5) utils::missing_cmd_args(FLERR, fmt::format("fix {} custom", style), error);
 
       // determine whether atom-style variable or atom property is used
 
@@ -219,11 +219,12 @@ FixRigid::FixRigid(LAMMPS *lmp, int narg, char **arg) :
     // error if atom belongs to more than 1 rigid body
 
   } else if (strcmp(arg[3], "group") == 0) {
-    if (narg < 5) utils::missing_cmd_args(FLERR, fmt::format("fix {} group"), error);
+    if (narg < 5) utils::missing_cmd_args(FLERR, fmt::format("fix {} group", style), error);
     rstyle = GROUP;
     nbody = utils::inumeric(FLERR, arg[4], false, lmp);
     if (nbody <= 0) error->all(FLERR, "Illegal fix {} number of groups {}", style, nbody);
-    if (narg < 5 + nbody) utils::missing_cmd_args(FLERR, fmt::format("fix {} group"), error);
+    if (narg < 5 + nbody)
+      utils::missing_cmd_args(FLERR, fmt::format("fix {} group", style), error);
     iarg = 5 + nbody;
 
     int *igroups = new int[nbody];

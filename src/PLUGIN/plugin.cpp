@@ -301,9 +301,6 @@ void plugin_unload(const char *style, const char *name, LAMMPS *lmp)
   std::string pstyle = style;
   if (pstyle == "pair") {
 
-    auto found = lmp->force->pair_map->find(name);
-    if (found != lmp->force->pair_map->end()) lmp->force->pair_map->erase(found);
-
     // must delete pair style instance if in use
 
     if (lmp->force->pair_style) {
@@ -314,47 +311,55 @@ void plugin_unload(const char *style, const char *name, LAMMPS *lmp)
       }
     }
 
-  } else if (pstyle == "bond") {
+    auto found = lmp->force->pair_map->find(name);
+    if (found != lmp->force->pair_map->end()) lmp->force->pair_map->erase(found);
 
-    auto found = lmp->force->bond_map->find(name);
-    if (found != lmp->force->bond_map->end()) lmp->force->bond_map->erase(found);
+  } else if (pstyle == "bond") {
 
     // must delete bond style instance if in use
 
     if ((lmp->force->bond_style != nullptr) && (lmp->force->bond_match(name) != nullptr))
       lmp->force->create_bond("none", 0);
 
-  } else if (pstyle == "angle") {
+    auto found = lmp->force->bond_map->find(name);
+    if (found != lmp->force->bond_map->end()) lmp->force->bond_map->erase(found);
 
-    auto found = lmp->force->angle_map->find(name);
-    if (found != lmp->force->angle_map->end()) lmp->force->angle_map->erase(found);
+  } else if (pstyle == "angle") {
 
     // must delete angle style instance if in use
 
     if ((lmp->force->angle_style != nullptr) && (lmp->force->angle_match(name) != nullptr))
       lmp->force->create_angle("none", 0);
 
-  } else if (pstyle == "dihedral") {
+    auto found = lmp->force->angle_map->find(name);
+    if (found != lmp->force->angle_map->end()) lmp->force->angle_map->erase(found);
 
-    auto found = lmp->force->dihedral_map->find(name);
-    if (found != lmp->force->dihedral_map->end()) lmp->force->dihedral_map->erase(found);
+  } else if (pstyle == "dihedral") {
 
     // must delete dihedral style instance if in use
 
     if ((lmp->force->dihedral_style) && (lmp->force->dihedral_match(name) != nullptr))
       lmp->force->create_dihedral("none", 0);
 
-  } else if (pstyle == "improper") {
+    auto found = lmp->force->dihedral_map->find(name);
+    if (found != lmp->force->dihedral_map->end()) lmp->force->dihedral_map->erase(found);
 
-    auto found = lmp->force->improper_map->find(name);
-    if (found != lmp->force->improper_map->end()) lmp->force->improper_map->erase(found);
+  } else if (pstyle == "improper") {
 
     // must delete improper style instance if in use
 
     if ((lmp->force->improper_style != nullptr) && (lmp->force->improper_match(name) != nullptr))
       lmp->force->create_improper("none", 0);
 
+    auto found = lmp->force->improper_map->find(name);
+    if (found != lmp->force->improper_map->end()) lmp->force->improper_map->erase(found);
+
   } else if (pstyle == "kspace") {
+
+    // must delete kspace style instance if in use
+
+    if ((lmp->force->kspace_style != nullptr) && (lmp->force->kspace_match(name, 1) != nullptr))
+      lmp->force->create_kspace("none", 0);
 
     auto kspace_map = lmp->force->kspace_map;
     auto found = kspace_map->find(name);
@@ -362,33 +367,35 @@ void plugin_unload(const char *style, const char *name, LAMMPS *lmp)
 
   } else if (pstyle == "compute") {
 
-    auto compute_map = lmp->modify->compute_map;
-    auto found = compute_map->find(name);
-    if (found != compute_map->end()) compute_map->erase(name);
-
     // must delete all compute instances using this compute style
 
     for (auto &icompute : lmp->modify->get_compute_by_style(name))
       lmp->modify->delete_compute(icompute->id);
 
-  } else if (pstyle == "fix") {
+    auto compute_map = lmp->modify->compute_map;
+    auto found = compute_map->find(name);
+    if (found != compute_map->end()) compute_map->erase(name);
 
-    auto fix_map = lmp->modify->fix_map;
-    auto found = fix_map->find(name);
-    if (found != fix_map->end()) fix_map->erase(name);
+  } else if (pstyle == "fix") {
 
     // must delete all fix instances using this fix style
 
     for (auto &ifix : lmp->modify->get_fix_by_style(name)) lmp->modify->delete_fix(ifix->id);
 
+    auto fix_map = lmp->modify->fix_map;
+    auto found = fix_map->find(name);
+    if (found != fix_map->end()) fix_map->erase(name);
+
   } else if (pstyle == "region") {
+
+    // must delete all region instances using this region style
+
+    for (auto &iregion : lmp->domain->get_region_by_style(name))
+      lmp->domain->delete_region(iregion);
 
     auto region_map = lmp->domain->region_map;
     auto found = region_map->find(name);
     if (found != region_map->end()) region_map->erase(name);
-
-    for (auto &iregion : lmp->domain->get_region_by_style(name))
-      lmp->domain->delete_region(iregion);
 
   } else if (pstyle == "command") {
 

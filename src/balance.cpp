@@ -140,8 +140,7 @@ void Balance::command(int narg, char **arg)
         xflag = UNIFORM;
         iarg += 2;
       } else {
-        if (1 + procgrid[0]-1 > narg)
-          error->all(FLERR,"Illegal balance command");
+        if (iarg + procgrid[0]-1 > narg) error->all(FLERR,"Illegal balance command");
         xflag = USER;
         delete[] user_xsplit;
         user_xsplit = new double[procgrid[0]+1];
@@ -160,8 +159,7 @@ void Balance::command(int narg, char **arg)
         yflag = UNIFORM;
         iarg += 2;
       } else {
-        if (1 + procgrid[1]-1 > narg)
-          error->all(FLERR,"Illegal balance command");
+        if (iarg + procgrid[1]-1 > narg) error->all(FLERR,"Illegal balance command");
         yflag = USER;
         delete[] user_ysplit;
         user_ysplit = new double[procgrid[1]+1];
@@ -180,8 +178,7 @@ void Balance::command(int narg, char **arg)
         zflag = UNIFORM;
         iarg += 2;
       } else {
-        if (1 + procgrid[2]-1 > narg)
-          error->all(FLERR,"Illegal balance command");
+        if (iarg + procgrid[2]-1 > narg) error->all(FLERR,"Illegal balance command");
         zflag = USER;
         delete[] user_zsplit;
         user_zsplit = new double[procgrid[2]+1];
