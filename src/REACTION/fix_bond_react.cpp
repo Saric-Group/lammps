@@ -246,6 +246,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(create_atoms_flag,nreacts,"bond/react:create_atoms_flag");
   memory->create(modify_create_fragid,nreacts,"bond/react:modify_create_fragid");
   memory->create(modify_create_nucrand,nreacts,"bond/react:modify_create_nucrand");          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+  memory->create(modify_create_nuccyl_rad,nreacts,"bond/react:modify_create_nuccyl_rad"); // added for cylinder nucleation
+  memory->create(modify_create_nuccyl_mod,nreacts,"bond/react:modify_create_nuccyl_mod"); // added for cylinder nucleation
   memory->create(overlapsq,nreacts,"bond/react:overlapsq");
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
   memory->create(nconstraints,nreacts,"bond/react:nconstraints");
@@ -276,6 +278,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     create_atoms_flag[i] = 0;
     modify_create_fragid[i] = -1;
     modify_create_nucrand[i] = -1;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+    modify_create_nuccyl_rad[i] = -1; // added for cylinder nucleation
+    modify_create_nuccyl_mod[i] = -1; // added for cylinder nucleation
     overlapsq[i] = 0.0;
     molecule_keyword[i] = OFF;
     nconstraints[i] = 0;
@@ -443,15 +447,23 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
             else if (strcmp(arg[iarg+1],"yes") == 0) modify_create_nucrand[rxn] = 1; // random orientation
             else if (strcmp(arg[iarg+1],"xor") == 0) modify_create_nucrand[rxn] = 0; // positive orientation in X
             else if (strcmp(arg[iarg+1],"mod") == 0) {
-              error->all(FLERR, "Command 'mod' has been deactivated.");
+              // error->all(FLERR, "Command 'mod' has been deactivated.");
               modify_create_nucrand[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
               iarg += 1;
             }
             else if (strcmp(arg[iarg+1], "cylinder") == 0){
-                modify_create_nucrand[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp);; // random orientation within a cylinder of radius R
-                iarg += 1;
+              // nuc cylinder (mod width) radius
+              if (strcmp(arg[iarg+2], "mod") == 0) {
+                modify_create_nuccyl_mod[rxn] =  utils::numeric(FLERR,arg[iarg+3],false,lmp); // positive orientation in X
+                iarg += 2; // mod + width
+              }
+              else {
+                modify_create_nuccyl_mod[rxn] = -1; // random orientation within a cylinder of radius R
+              }
+              modify_create_nuccyl_rad[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp);; // random orientation within a cylinder of radius R
+              iarg += 1; // radius
             }
-            iarg += 2;
+            iarg += 2; // nuc + cylinder
           } else if (strcmp(arg[iarg],"overlap") == 0) {
             if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                           "'modify_create' has too few arguments");
@@ -683,6 +695,8 @@ FixBondReact::~FixBondReact()
   memory->destroy(create_atoms_flag);
   memory->destroy(modify_create_fragid);
   memory->destroy(modify_create_nucrand);          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+  memory->destroy(modify_create_nuccyl_rad); // added for cylinder nucleation
+  memory->destroy(modify_create_nuccyl_mod); // added for cylinder nucleation
   memory->destroy(overlapsq);
 
   memory->destroy(iatomtype);
@@ -3854,25 +3868,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
           }
         }
         else if (modify_create_nucrand[rxnID] > 1) {
-          // randomly place particles on cylinder
-          // cylinder radius supplied in modify_create_nucrand[rxnID]
-          // constant axis is y
-          if (fit_incr == 0) { 
-            // random position for first particle
-            double phi = 2*M_PI*random[rxnID]->uniform(); // random angle on cylinder
-            double y = (domain->boxhi[1] - domain->boxlo[1]) * (random[rxnID]->uniform()-0.5); // random y position
-
-            xfrozen[fit_incr][0] = modify_create_nucrand[rxnID]*cos(phi);
-            xfrozen[fit_incr][1] = y;
-            xfrozen[fit_incr][2] = modify_create_nucrand[rxnID]*sin(phi);
-          } else {
-            // other particles! along y-axis for now, TODO: properly place other particles on cylinder
-            xfrozen[fit_incr][0] = xfrozen[0][0];
-            xfrozen[fit_incr][1] = xfrozen[0][0] + (float)fit_incr;
-            xfrozen[fit_incr][2] = xfrozen[0][2];
-          }
-          // Chris' 'mod' command, deactivated for cylindrical creation
-          /* // Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
+          // Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
           double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
           if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID] - Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
             xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
@@ -3886,7 +3882,42 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(ang);
             xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
             xfrozen[fit_incr][2] = 0.0; 
-          } */
+          }
+        }
+        else if (modify_create_nuccyl_rad[rxnID] > 0) {
+          // randomly place particles on cylinder
+          // cylinder radius supplied in modify_create_nucrand[rxnID]
+          // constant axis is y
+          if (fit_incr == 0) { 
+            // random position for first particle
+            double phi = 2*M_PI*random[rxnID]->uniform(); // random angle on cylinder
+            double y = 0.;
+            if (modify_create_nuccyl_mod[rxnID] > 0) {
+              // Use Box-Muller transform
+              // Box-Muller transform is apparently bad: https://stackoverflow.com/questions/75677/converting-a-uniform-distribution-to-a-normal-distribution
+              double u1 = random[rxnID]->uniform();
+              double u2 = random[rxnID]->uniform();
+              y = sqrt(-2*log(u1))*cos(2*M_PI*u2)*modify_create_nuccyl_mod[rxnID]+0.0; 
+            } else {
+                y = (domain->boxhi[1] - domain->boxlo[1]) * (random[rxnID]->uniform()-0.5); // random y position
+            }
+
+            xfrozen[fit_incr][0] = modify_create_nuccyl_rad[rxnID]*cos(phi);
+            xfrozen[fit_incr][1] = y;
+            xfrozen[fit_incr][2] = modify_create_nuccyl_rad[rxnID]*sin(phi);
+          } else {
+            // other particles! along y-axis for now, TODO: properly place other particles on cyelinder
+            double* shift = new double[3];
+            random_orientation_cylinder(rxnID, shift, xfrozen[0]);
+
+            xfrozen[fit_incr][0] = xfrozen[0][0] + shift[0];
+            xfrozen[fit_incr][1] = xfrozen[0][1] + shift[1];
+            xfrozen[fit_incr][2] = xfrozen[0][2] + shift[2];
+
+            delete[] shift;
+          }
+          // Chris' 'mod' command, deactivated for cylindrical creation
+          
         }
         // New boundary implementation, without using the closest_image() function from domain.cpp, which sometimes returns the wrong ID, likely due to the resetting of molecules IDs as new particles are created (part of the fix_bond_react.cpp)
         // Chris - 20/02/2023
@@ -4107,6 +4138,45 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   // atom creation successful
   memory->destroy(coords);
   memory->destroy(imageflags);
+  return 1;
+}
+
+/* ----------------------------------------------------------------------
+creation of a random vector normal to a cylinder
+used for random direction in nucleation on cylinder
+------------------------------------------------------------------------- */
+
+int FixBondReact::random_orientation_cylinder(int rxnID, double *out_vec, double* cylinder_point)
+{
+  // TODO: this function allocates a lot of memory, optimise to use preallocated variables
+  double phi = 2*M_PI*random[rxnID]->uniform(); // random angle on cylinder
+
+  // generate the normal vector of this point on the cylinder
+  double* normal_vec = new double[3];
+  normal_vec[0] = cylinder_point[0];
+  normal_vec[1] = 0;
+  normal_vec[2] = cylinder_point[2];
+  double norm = 1./sqrt(normal_vec[0]*normal_vec[0] + normal_vec[1]*normal_vec[1] + normal_vec[2]*normal_vec[2]);
+  for(uint i=0;i<3;i++) normal_vec[i] *= norm;
+
+  // make a trial vector in y direction to rotate
+  double* buff_vec = new double[3];
+  buff_vec[0] = 0;
+  buff_vec[1] = 1;
+  buff_vec[2] = 0;
+
+  // now use shortened version of Rodrigues' rotation formula (https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula)
+  // compute (v cos(phi)) + (k x v sin(phi))
+  out_vec[0] = buff_vec[0] * cos(phi) + (normal_vec[1] * buff_vec[2] - normal_vec[2] * buff_vec[1]) * sin(phi);
+  out_vec[1] = buff_vec[1] * cos(phi) + (normal_vec[2] * buff_vec[0] - normal_vec[0] * buff_vec[2]) * sin(phi);
+  out_vec[2] = buff_vec[2] * cos(phi) + (normal_vec[0] * buff_vec[1] - normal_vec[1] * buff_vec[0]) * sin(phi);
+  
+  // technically this shouldn't be necessary since both vectors are unit vectors
+  norm = 1./sqrt(out_vec[0]*out_vec[0] + out_vec[1]*out_vec[1] + out_vec[2]*out_vec[2]);
+  for(uint i=0;i<3;i++) out_vec[i] *= norm;
+  norm = sqrt(out_vec[0]*out_vec[0] + out_vec[1]*out_vec[1] + out_vec[2]*out_vec[2]);
+  delete [] normal_vec;
+  delete [] buff_vec;
   return 1;
 }
 

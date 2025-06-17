@@ -78,6 +78,8 @@ class FixBondReact : public Fix {
   int *create_atoms_flag;
   int *modify_create_fragid;
   int *modify_create_nucrand;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+  double *modify_create_nuccyl_rad; // added for cylinder nucleation
+  double *modify_create_nuccyl_mod; // added for cylinder nucleation
   double *overlapsq;
   int *molecule_keyword;
   int maxnconstraints;
@@ -205,6 +207,7 @@ class FixBondReact : public Fix {
                      const std::string &);    // eval rxn_sum and rxn_ave
   void get_atoms2bond(int);
   int get_chirality(double[12]);              // get handedness given an ordered set of coordinates
+  int random_orientation_cylinder(int, double*, double*);
 
   void open(char *);
   void readline(char *);
