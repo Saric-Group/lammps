@@ -4237,6 +4237,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         
         int n = atom->nlocal - 1;
         // !! could do better job choosing mol ID for added atoms
+        // Chris 12/10/2023: replaced the logic for assigning molecule IDs here
         if (atom->molecule_flag) {
           if (twomol->moleculeflag) {
             if (twomol->molecule[m] > 0) {
