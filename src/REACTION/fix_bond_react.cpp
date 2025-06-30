@@ -115,6 +115,9 @@ enum { LOCAL, GLOBAL };
 // values for molecule_keyword
 enum { OFF, INTER, INTRA };
 
+// values for lifetime_flag
+enum { LIFETIME_OFF, LIFETIME_ON, LIFETIME_HYDROLYSIS };
+
 /* ---------------------------------------------------------------------- */
 // clang-format off
 
@@ -194,7 +197,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   int iarg = 3;
   stabilization_flag = 0;
   reset_mol_ids_flag = 1;
-  int num_common_keywords = 2;
+  lifetime_flag = 0;
+  int num_common_keywords = 3; // @FelixWodaczek/lifetime changed from 2 to 3
   for (int m = 0; m < num_common_keywords; m++) {
     if (strcmp(arg[iarg],"stabilization") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
@@ -212,7 +216,19 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
                                     "'reset_mol_ids' keyword has too few arguments");
       reset_mol_ids_flag = utils::logical(FLERR,arg[iarg+1],false,lmp);
       iarg += 2;
-    } else if (strcmp(arg[iarg],"react") == 0) {
+    } else if (strcmp(arg[iarg], "lifetime") == 0) {
+        if (iarg + 2 > narg) error->all(FLERR, "Illegal fix bond/react command: "
+                                      "'lifetime' keyword has too few arguments");
+        
+        if (strcmp(arg[iarg+1], "hydrolysis") == 0) {
+            lifetime_flag = LIFETIME_HYDROLYSIS;
+            error->all(FLERR, "fix bond/react: Explicit hydrolysis is not part of fix bond/react yet.");
+        }
+        
+        lifetime_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
+        iarg += 2;
+    }
+    else if (strcmp(arg[iarg],"react") == 0) {
       break;
     } else error->all(FLERR,"Illegal fix bond/react command: unknown keyword");
   }
@@ -631,6 +647,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   id_fix1 = nullptr;
   id_fix2 = nullptr;
   id_fix3 = nullptr;
+  id_lifetime_fix = nullptr; // @FelixWodaczek/lifetime
   statted_id = nullptr;
   custom_exclude_flag = 0;
 
@@ -733,6 +750,10 @@ FixBondReact::~FixBondReact()
 
   if (id_fix2 && modify->get_fix_by_id(id_fix2)) modify->delete_fix(id_fix2);
   delete[] id_fix2;
+
+  // @FelixWodaczek/lifetime delete lifetime fix if not already deleted
+  if (id_lifetime_fix && modify->get_fix_by_id(id_lifetime_fix)) modify->delete_fix(id_lifetime_fix);
+  delete[] id_lifetime_fix;
 
   delete[] statted_id;
   delete[] guess_branch;
@@ -847,6 +868,23 @@ void FixBondReact::post_constructor()
     if (!modify->get_fix_by_id(id_fix1))
       fix1 = modify->add_fix(fmt::format("{} {} nve/limit  {}",
                                          id_fix1,master_group,nve_limit_xmax));
+  }
+
+  // @FelixWodaczek/lifetime handle lifetime flag here
+  if (lifetime_flag != LIFETIME_OFF) {
+    // create an atom property to store the lifetime of atoms
+    id_lifetime_fix = utils::strdup("bond_react_lifetime");
+    if (!modify->get_fix_by_id(id_lifetime_fix)) {
+      fix_lifetime = modify->add_fix(std::string(id_lifetime_fix) +
+                                     " all property/atom i_creation_steps ghost yes");
+      
+      // initialize per-atom creation_steps to step 0
+      int flag,cols;
+      int ct_index = atom->find_custom("creation_steps",flag,cols);
+      int *i_creation_steps = atom->ivector[ct_index];
+      for (int i = 0; i < atom->nlocal; i++)
+        i_creation_steps[i] = 0;
+    }
   }
 }
 
@@ -3190,6 +3228,15 @@ void FixBondReact::update_everything()
         atom->v[n][2] = myaddatom.v[2];
         if (atom->rmass) atom->rmass[n]= myaddatom.rmass;
         modify->create_attribute(n);
+      }
+
+      // @FelixWodaczek/lifetime now update lifetimes
+      if (lifetime_flag) {
+        int ct_index = atom->find_custom("creation_steps",flag,cols);
+        int *i_creation_steps = atom->ivector[ct_index];
+        for (int i = atom->nlocal - addatoms.size(); i < atom->nlocal; i++) {
+          i_creation_steps[i] = update->ntimestep;
+        }
       }
 
       // reset atom->map

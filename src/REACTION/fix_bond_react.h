@@ -67,6 +67,7 @@ class FixBondReact : public Fix {
   tagint lastcheck;
   int stabilization_flag;
   int reset_mol_ids_flag;
+  int lifetime_flag; // @FelixWodaczek/lifetime flag for lifetime keyword
   int custom_exclude_flag;
   int **rate_limit;
   int **store_rxn_count;
@@ -114,6 +115,7 @@ class FixBondReact : public Fix {
   Fix *fix2;                   // properties/atom used to indicate 1) relaxing atoms
                                //                                  2) to which 'react' atom belongs
   Fix *fix3;                   // property/atom used for system-wide thermostat
+  Fix *fix_lifetime;           // @FelixWodaczek/lifetime fix for atom/property i_creation_times
   class RanMars **random;      // random number for 'prob' keyword
   class RanMars **rrhandom;    // random number for Arrhenius constraint
   class NeighList *list;
@@ -124,7 +126,8 @@ class FixBondReact : public Fix {
   char *nve_limit_xmax;    // indicates max distance allowed to move when relaxing
   char *id_fix1;           // id of internally created fix nve/limit
   char *id_fix2;           // id of internally created fix per-atom properties
-  char *id_fix3;           // id of internally created 'stabilization group' per-atom property fix
+  char *id_fix3;           // id of internally created 'stabilization group' per-atom property fix      
+  char *id_lifetime_fix;   // @FelixWodaczek/lifetime id of internally created fix for lifetime keyword
   char *statted_id;        // name of 'stabilization group' per-atom property
   char *master_group;      // group containing relaxing atoms from all fix rxns
   char *exclude_group;     // group for system-wide thermostat
