@@ -68,6 +68,7 @@ class FixBondReact : public Fix {
   int stabilization_flag;
   int reset_mol_ids_flag;
   int lifetime_flag; // @FelixWodaczek/lifetime flag for lifetime keyword
+  int hydrolysis_seed; // @FelixWodaczek/lifetime seed for hydrolysis keyword
   int custom_exclude_flag;
   int **rate_limit;
   int **store_rxn_count;
@@ -116,8 +117,10 @@ class FixBondReact : public Fix {
                                //                                  2) to which 'react' atom belongs
   Fix *fix3;                   // property/atom used for system-wide thermostat
   Fix *fix_lifetime;           // @FelixWodaczek/lifetime fix for atom/property i_creation_times
+  Fix *fix_hydrolysis;         // @FelixWodaczek/lifetime fix for atom/property d_hydrolysis_rn
   class RanMars **random;      // random number for 'prob' keyword
   class RanMars **rrhandom;    // random number for Arrhenius constraint
+  class RanMars *hydrolysis_random; // @FelixWodaczek/lifetime random number for hydrolysis keyword
   class NeighList *list;
   class ResetAtomsMol *reset_mol_ids;    // class for resetting mol IDs
 
@@ -128,6 +131,7 @@ class FixBondReact : public Fix {
   char *id_fix2;           // id of internally created fix per-atom properties
   char *id_fix3;           // id of internally created 'stabilization group' per-atom property fix      
   char *id_lifetime_fix;   // @FelixWodaczek/lifetime id of internally created fix for lifetime keyword
+  char *id_hydrolysis_fix; // @FelixWodaczek/lifetime id of internally created fix for hydrolysis keyword
   char *statted_id;        // name of 'stabilization group' per-atom property
   char *master_group;      // group containing relaxing atoms from all fix rxns
   char *exclude_group;     // group for system-wide thermostat

@@ -217,16 +217,19 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
       reset_mol_ids_flag = utils::logical(FLERR,arg[iarg+1],false,lmp);
       iarg += 2;
     } else if (strcmp(arg[iarg], "lifetime") == 0) {
-        if (iarg + 2 > narg) error->all(FLERR, "Illegal fix bond/react command: "
-                                      "'lifetime' keyword has too few arguments");
-        
-        if (strcmp(arg[iarg+1], "hydrolysis") == 0) {
-            lifetime_flag = LIFETIME_HYDROLYSIS;
-            error->all(FLERR, "fix bond/react: Explicit hydrolysis is not part of fix bond/react yet.");
-        }
-        
-        lifetime_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
-        iarg += 2;
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix bond/react command: "
+                                    "'lifetime' keyword has too few arguments");
+      
+      if (strcmp(arg[iarg+1], "hydrolysis") == 0) {
+          lifetime_flag = LIFETIME_HYDROLYSIS;
+          hydrolysis_seed = utils::inumeric(FLERR, arg[iarg + 2], false, lmp);
+          iarg += 1;
+          // error->all(FLERR, "fix bond/react: Explicit hydrolysis is not part of fix bond/react yet.");
+      } else {
+          lifetime_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
+      }
+      
+      iarg += 2;
     }
     else if (strcmp(arg[iarg],"react") == 0) {
       break;
@@ -885,6 +888,22 @@ void FixBondReact::post_constructor()
       int *i_creation_steps = atom->ivector[ct_index];
       for (int i = 0; i < atom->nlocal; i++)
         i_creation_steps[i] = 0;
+    }
+    if (lifetime_flag == LIFETIME_HYDROLYSIS) {
+      id_hydrolysis_fix = utils::strdup("bond_react_hydrolysis");
+      if (!modify->get_fix_by_id(id_hydrolysis_fix)) {
+        fix_hydrolysis = modify->add_fix(std::string(id_hydrolysis_fix) +
+                                         " all property/atom d_hydrolysis_rn ghost yes");
+        
+        hydrolysis_random = new RanMars(lmp,hydrolysis_seed + comm->me);
+
+        // initialize per-atom hydrolysis_steps to step 0
+        int flag,cols;
+        int hydro_index = atom->find_custom("hydrolysis_rn",flag,cols);
+        int *d_hydrolysis_rn = atom->ivector[hydro_index];
+        for (int i = 0; i < atom->nlocal; i++)
+          d_hydrolysis_rn[i] = hydrolysis_random->uniform();
+      }
     }
   }
 }
@@ -3237,6 +3256,14 @@ void FixBondReact::update_everything()
         int *i_creation_steps = atom->ivector[ct_index];
         for (int i = atom->nlocal - addatoms.size(); i < atom->nlocal; i++) {
           i_creation_steps[i] = update->ntimestep;
+        }
+
+        if (lifetime_flag == LIFETIME_HYDROLYSIS) {
+          int hydro_index = atom->find_custom("hydrolysis_rn",flag,cols);
+          int *d_hydrolysis_rn = atom->ivector[hydro_index];
+          for (int i = atom->nlocal - addatoms.size(); i < atom->nlocal; i++) {
+            d_hydrolysis_rn[i] = hydrolysis_random->uniform();
+          }
         }
       }
 
