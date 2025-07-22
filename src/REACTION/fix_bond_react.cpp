@@ -648,6 +648,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   id_fix2 = nullptr;
   id_fix3 = nullptr;
   id_lifetime_fix = nullptr; // @FelixWodaczek/lifetime
+  id_hydrolysis_fix = nullptr; // @FelixWodaczek/lifetime
   statted_id = nullptr;
   custom_exclude_flag = 0;
 
