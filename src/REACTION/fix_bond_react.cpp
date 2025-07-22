@@ -900,7 +900,7 @@ void FixBondReact::post_constructor()
         // initialize per-atom hydrolysis_steps to step 0
         int flag,cols;
         int hydro_index = atom->find_custom("hydrolysis_rn",flag,cols);
-        int *d_hydrolysis_rn = atom->ivector[hydro_index];
+        double *d_hydrolysis_rn = atom->dvector[hydro_index];
         for (int i = 0; i < atom->nlocal; i++)
           d_hydrolysis_rn[i] = hydrolysis_random->uniform();
       }
@@ -3260,7 +3260,7 @@ void FixBondReact::update_everything()
 
         if (lifetime_flag == LIFETIME_HYDROLYSIS) {
           int hydro_index = atom->find_custom("hydrolysis_rn",flag,cols);
-          int *d_hydrolysis_rn = atom->ivector[hydro_index];
+          double *d_hydrolysis_rn = atom->dvector[hydro_index];
           for (int i = atom->nlocal - addatoms.size(); i < atom->nlocal; i++) {
             d_hydrolysis_rn[i] = hydrolysis_random->uniform();
           }
