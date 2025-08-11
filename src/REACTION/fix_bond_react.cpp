@@ -3369,6 +3369,14 @@ void FixBondReact::update_everything()
         atom->v[n][1] = myaddatom.v[1];
         atom->v[n][2] = myaddatom.v[2];
         if (atom->rmass) atom->rmass[n]= myaddatom.rmass;
+        
+        // @andraz-gnidovec: Dipole handling
+        if (atom->mu_flag) {
+          atom->mu[n][0] = myaddatom.mu[0];
+          atom->mu[n][1] = myaddatom.mu[1];
+          atom->mu[n][2] = myaddatom.mu[2];
+      }
+
         modify->create_attribute(n);
       }
 
@@ -3967,6 +3975,10 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   memory->create(coords,twomol->natoms,3,"bond/react:coords");
   memory->create(imageflags,twomol->natoms,"bond/react:imageflags");
 
+  // @andraz-gnidovec: added memory space for dipole vectors
+  double **rotated_mus;
+  memory->create(rotated_mus, twomol->natoms, 3, "bond/react:rotated_mus");
+
   double *sublo,*subhi;
   if (domain->triclinic == 0) {
     sublo = domain->sublo;
@@ -4149,6 +4161,12 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
 
   // get coordinates and image flags
   for (int m = 0; m < twomol->natoms; m++) {
+
+    // @andraz-gnidovec: create default dipole vector
+    rotated_mus[m][0] = 0.0;
+    rotated_mus[m][1] = 0.0;
+    rotated_mus[m][2] = 0.0;
+
     if (create_atoms[m][rxnID] == 1) {
       // apply optimal rotation/translation for created atom coords
       // also map coords back into simulation box
@@ -4157,9 +4175,15 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         for (int i = 0; i < 3; i++) coords[m][i] += superposer.T[i];
         imageflags[m] = atom->image[ifit];
         domain->remap(coords[m],imageflags[m]);
+
+        // @andraz-gnidovec: added dipole vector rotation, matching coordinates
+        if (twomol->muflag) {
+            MathExtra::matvec(rotmat, twomol->mu[m], rotated_mus[m]);
+        }
       }
       MPI_Bcast(&imageflags[m],1,MPI_LMP_IMAGEINT,fitroot,world);
       MPI_Bcast(coords[m],3,MPI_DOUBLE,fitroot,world);
+      MPI_Bcast(rotated_mus[m], 3, MPI_DOUBLE, fitroot, world);
     }
   }
 
@@ -4290,6 +4314,11 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         myaddatom.v[1] = myv[1];
         myaddatom.v[2] = myv[2];
 
+        // @andraz-gnidovec: added dipole vector to created atoms
+        myaddatom.mu[0] = rotated_mus[m][0];
+        myaddatom.mu[1] = rotated_mus[m][1];
+        myaddatom.mu[2] = rotated_mus[m][2];
+
         addatoms.push_back(myaddatom);
       }
       // globally update mega_glove and equivalences
@@ -4312,6 +4341,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   // atom creation successful
   memory->destroy(coords);
   memory->destroy(imageflags);
+  memory->destroy(rotated_mus);
   return 1;
 }
 
