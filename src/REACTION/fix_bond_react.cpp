@@ -3370,12 +3370,33 @@ void FixBondReact::update_everything()
         atom->v[n][2] = myaddatom.v[2];
         if (atom->rmass) atom->rmass[n]= myaddatom.rmass;
         
-        // @andraz-gnidovec: Dipole handling
+        // @andraz-gnidovec: handling of dipoles and rotational dynamics
         if (atom->mu_flag) {
           atom->mu[n][0] = myaddatom.mu[0];
           atom->mu[n][1] = myaddatom.mu[1];
           atom->mu[n][2] = myaddatom.mu[2];
-      }
+        }
+
+        if (atom->radius) {
+          atom->radius[n] = 0.5;
+
+          if (atom->rmass_flag) {
+            atom->rmass[n] = myaddatom.rmass;
+          }
+        }
+        
+        // initialize zero angular velocity and torque
+        if (atom->omega_flag) {
+          atom->omega[n][0] = 0.0;
+          atom->omega[n][1] = 0.0;
+          atom->omega[n][2] = 0.0;
+        }
+
+        if (atom->torque_flag) {
+          atom->torque[n][0] = 0.0;
+          atom->torque[n][1] = 0.0;
+          atom->torque[n][2] = 0.0;
+        }
 
         modify->create_attribute(n);
       }
