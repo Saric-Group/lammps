@@ -3375,6 +3375,7 @@ void FixBondReact::update_everything()
           atom->mu[n][0] = myaddatom.mu[0];
           atom->mu[n][1] = myaddatom.mu[1];
           atom->mu[n][2] = myaddatom.mu[2];
+          atom->mu[n][3] = 1.0;
         }
 
         if (atom->radius) {
