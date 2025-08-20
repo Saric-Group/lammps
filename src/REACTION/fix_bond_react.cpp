@@ -89,7 +89,7 @@ static constexpr double BIG = 1.0e20;
 static constexpr int DELTA = 16;
 static constexpr int MAXGUESS = 20;      // max # of guesses allowed by superimpose algorithm
 static constexpr int MAXCONARGS = 14;    // max # of arguments for any type of constraint + rxnID
-static constexpr int NUMVARVALS = 5;     // max # of keyword values that have variables as input
+static constexpr int NUMVARVALS = 6;     // max # of keyword values that have variables as input
 
 // various statuses of superimpose algorithm:
 // ACCEPT: site successfully matched to pre-reacted template
@@ -107,7 +107,7 @@ enum { DISTANCE, ANGLE, DIHEDRAL, ARRHENIUS, RMSD, CUSTOM };
 enum { ATOM, FRAG };
 
 // keyword values that accept variables as input
-enum { NEVERY, RMIN, RMAX, PROB, NRATE };
+enum { NEVERY, RMIN, RMAX, PROB, NRATE, ENERGY_TEMP };
 
 // flag for one-proc vs shared reaction sites
 enum { LOCAL, GLOBAL };
@@ -272,7 +272,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(overlapsq,nreacts,"bond/react:overlapsq");
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
   memory->create(energy_check_flag, nreacts, "bond/react:energy_check_flag");  // @andraz-gnidovec: flag for energy check keyword
-  memory->create(energy_max, nreacts, "bond/react:energy_max");
+  memory->create(energy_temp, nreacts, "bond/react:energy_temp");
   memory->create(nconstraints,nreacts,"bond/react:nconstraints");
   memory->create(constraintstr,nreacts,MAXLINE,"bond/react:constraintstr");
   memory->create(var_flag,NUMVARVALS,nreacts,"bond/react:var_flag");
@@ -306,7 +306,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     overlapsq[i] = 0.0;
     molecule_keyword[i] = OFF;
     energy_check_flag[i] = 0;   // Default to off
-    energy_max[i] = 0.0;
+    energy_temp[i] = 0.0;
     nconstraints[i] = 0;
     // set default limit duration to 60 timesteps
     limit_duration[i] = 60;
@@ -470,7 +470,13 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
             if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                           "'energy_check' has too few arguments");
             energy_check_flag[rxn] = 1;
-            energy_max[rxn] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
+            if (strncmp(arg[iarg+1],"v_",2) == 0) {
+              read_variable_keyword(&arg[iarg+1][2], ENERGY_TEMP, rxn);
+            } else {
+              energy_temp[rxn] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
+              if (energy_temp[rxn] < 0.0)
+                error->all(FLERR,"Temperature for energy_check keyword cannot be negative");
+            }
             iarg += 2;
           
           } else if (strcmp(arg[iarg],"nuc") == 0) {                                                // Adding a flag "nuc" to nucleate the new dimer in a random position within the box, independent of the position of the nucleator - Chris 22/02/2023
@@ -783,7 +789,7 @@ FixBondReact::~FixBondReact()
   memory->destroy(modify_create_nuccyl_mod); // added for cylinder nucleation
   memory->destroy(overlapsq);
   memory->destroy(energy_check_flag);
-  memory->destroy(energy_max);
+  memory->destroy(energy_temp);
 
   memory->destroy(iatomtype);
   memory->destroy(jatomtype);
@@ -4264,14 +4270,16 @@ int abortflag = 0;
       }
     }
   }
-  
-  // if overlap check failed, proceed to energy check
-  if (overlap_failed) {
-    // if energy check is enabeld
-    if (energy_check_flag[rxnID]) {
-      double fforce; // dummy variable for force, required by the function signature
-      double E_new_vs_old = 0.0, E_new_vs_new = 0.0;
 
+  // decide whether to abort, perform Metropolis check, or accept
+  // energy calculation is required if:
+  // - overlap failed and an energy check is available to rescue it
+  // - overlap passed (or wasn't performed)
+  if ((overlap_failed && energy_check_flag[rxnID]) || (!overlap_failed && energy_check_flag[rxnID])) {
+      double fforce;  // dummy variable required by force signature
+      double E_new_vs_old = 0.0, E_new_vs_new = 0.0;
+      
+      // calculate E_new_vs_old
       for (int m = 0; m < twomol->natoms; m++) {
         if (create_atoms[m][rxnID] == 1) {
           int new_type = twomol->type[m];
@@ -4289,56 +4297,7 @@ int abortflag = 0;
         }
       }
 
-      for (int m = 0; m < twomol->natoms; m++) {
-        if (create_atoms[m][rxnID] == 1) {
-          for (int m2 = m + 1; m2 < twomol->natoms; m2++) {
-            if (create_atoms[m2][rxnID] == 1) {
-              delx = coords[m][0] - coords[m2][0];
-              dely = coords[m][1] - coords[m2][1];
-              delz = coords[m][2] - coords[m2][2];
-              domain->minimum_image(delx,dely,delz);
-              rsq = delx*delx + dely*dely + delz*delz;
-              int type1 = twomol->type[m];
-              int type2 = twomol->type[m2];
-              if (rsq < force->pair->cutsq[type1][type2]) {
-                E_new_vs_new += force->pair->single(0, 0, type1, type2, rsq, 1.0, 1.0, fforce);
-              }
-            }
-          }
-        }
-      }
-      
-      double total_insertion_energy = E_new_vs_old + E_new_vs_new;
-      if (total_insertion_energy > energy_max[rxnID]) {
-        abortflag = 1; // energy rescue failed, so we abort
-      }
-    } else {
-      // overlap failed, and no energy rescue is available, so we ust abort
-      abortflag = 1;
-    }
-  
-  // if overlap check passed (or wasn't performed), run energy check if it's the only method requested
-  } else if (energy_check_flag[rxnID]) {
-      double fforce; // dummy variable for force
-      double E_new_vs_old = 0.0, E_new_vs_new = 0.0;
-      
-      for (int m = 0; m < twomol->natoms; m++) {
-        if (create_atoms[m][rxnID] == 1) {
-          int new_type = twomol->type[m];
-          for (int i = 0; i < atom->nlocal + atom->nghost; i++) {
-            delx = coords[m][0] - x[i][0];
-            dely = coords[m][1] - x[i][1];
-            delz = coords[m][2] - x[i][2];
-            domain->minimum_image(delx,dely,delz);
-            rsq = delx*delx + dely*dely + delz*delz;
-            int existing_type = atom->type[i];
-            if (rsq < force->pair->cutsq[new_type][existing_type]) {
-              E_new_vs_old += force->pair->single(0, 0, new_type, existing_type, rsq, 1.0, 1.0, fforce);
-            }
-          }
-        }
-      }
-
+      // calculate E_new_vs_new
       for (int m = 0; m < twomol->natoms; m++) {
         if (create_atoms[m][rxnID] == 1) {
           for (int m2 = m + 1; m2 < twomol->natoms; m2++) {
@@ -4359,11 +4318,32 @@ int abortflag = 0;
       }
 
       double total_insertion_energy = E_new_vs_old + E_new_vs_new;
-      if (total_insertion_energy > energy_max[rxnID]) {
-        abortflag = 1;
+
+      // apply Metropolis acceptance criterion
+      double temp;
+      if (var_flag[ENERGY_TEMP][rxnID]) {
+        temp = input->variable->compute_equal(var_id[ENERGY_TEMP][rxnID]);
+      } else {
+        temp = energy_temp[rxnID];
       }
+
+      if (total_insertion_energy > 0.0) {
+        if (temp <= 0.0) { // at T=0, only accept energetically favorable moves
+          abortflag = 1;
+        } else {
+          double prob = exp(-total_insertion_energy / (force->boltz * temp));
+          if (random[rxnID]->uniform() > prob) {
+            abortflag = 1; // probabilistic rejection
+          }
+        }
+      }
+      // if total_insertion_energy <= 0.0, it is always accepted (abortflag remains 0)
+
+  } else if (overlap_failed) {
+    // overlap failed, and no energy-based rescue is available, so we abort
+    abortflag = 1;
   }
-
+  
   // final decision to abort or proceed
   MPI_Allreduce(MPI_IN_PLACE, &abortflag, 1, MPI_INT, MPI_MAX, world);
   if (abortflag) {
