@@ -70,6 +70,8 @@ class FixBondReact : public Fix {
   RESET_MOL_IDS molid_mode;
   int lifetime_flag; // @FelixWodaczek/lifetime flag for lifetime keyword
   int hydrolysis_seed; // @FelixWodaczek/lifetime seed for hydrolysis keyword
+  int *energy_check_flag; //@andraz-gnidovec: flag for energy check keyword
+  double *energy_max; // @andraz-gnidovec: max energy for accepting reactions
   int custom_exclude_flag;
   int **rate_limit;
   int **store_rxn_count;
