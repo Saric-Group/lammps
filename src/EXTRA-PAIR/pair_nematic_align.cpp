@@ -12,8 +12,10 @@
 #include "neigh_list.h"
 #include "neighbor.h"
 #include "update.h"
+#include "utils.h"
 
 #include <cmath>
+#include <cstring>
 
 using namespace LAMMPS_NS;
 
@@ -30,15 +32,15 @@ PairNematicAlign::~PairNematicAlign()
     memory->destroy(setflag);
     memory->destroy(cutsq);
     memory->destroy(epsilon);
-    memory->destroy(k_exp);
     memory->destroy(cut);
+    memory->destroy(wca_flag);
+    memory->destroy(lj_sigma);
+    memory->destroy(lj_epsilon);
   }
 }
 
 void PairNematicAlign::allocate()
 {
-  fprintf(screen, "DEBUG: PairNematicAlign::allocate() is being called!\n");
-
   if (allocated) return;
   allocated = 1;
   int n = atom->ntypes;
@@ -49,17 +51,23 @@ void PairNematicAlign::allocate()
 
   memory->create(cutsq, n + 1, n + 1, "pair:cutsq");
   memory->create(epsilon, n + 1, n + 1, "pair:epsilon");
-  memory->create(k_exp, n + 1, n + 1, "pair:k_exp");
   memory->create(cut, n + 1, n + 1, "pair:cut");
+
+  memory->create(wca_flag, n + 1, n + 1, "pair:wca_flag");
+  memory->create(lj_sigma, n + 1, n + 1, "pair:lj_sigma");
+  memory->create(lj_epsilon, n + 1, n + 1, "pair:lj_epsilon");
+
+  for (int i = 1; i <= n; i++) {
+    for (int j = 1; j <= n; j++) {
+      wca_flag[i][j] = 0;
+    }
+  }
 }
 
 void PairNematicAlign::settings(int narg, char **arg)
 {
   if (narg != 1) error->all(FLERR, "Incorrect args for pair_style command");
-
   cut_global = utils::numeric(FLERR, arg[0], false, lmp);
-
-  // reset cutoffs for pairs that have already been set
   if (allocated) {
     for (int i = 1; i <= atom->ntypes; i++)
       for (int j = i; j <= atom->ntypes; j++)
@@ -69,11 +77,8 @@ void PairNematicAlign::settings(int narg, char **arg)
 
 void PairNematicAlign::coeff(int narg, char **arg)
 {
-
-  fprintf(screen, "DEBUG: In PairNematicAlign::coeff() with narg = %d\n", narg);
-
-  // Expected format: pair_coeff I J epsilon k r_cut
-  if (narg < 4 || narg > 5) error->all(FLERR, "Incorrect args for pair coefficients");
+  if (narg != 3 && narg != 4 && narg != 6 && narg != 7)
+    error->all(FLERR, "Incorrect args for pair coefficients");
   if (!allocated) allocate();
 
   int ilo, ihi, jlo, jhi;
@@ -81,18 +86,50 @@ void PairNematicAlign::coeff(int narg, char **arg)
   utils::bounds(FLERR, arg[1], 1, atom->ntypes, jlo, jhi, error);
 
   double epsilon_one = utils::numeric(FLERR, arg[2], false, lmp);
-  double k_one = utils::numeric(FLERR, arg[3], false, lmp);
-
+  
   double cut_one = cut_global;
-  if (narg == 5) cut_one = utils::numeric(FLERR, arg[4], false, lmp);
+  int wca_flag_one = 0;
+  double lj_sigma_one = 0.0;
+  double lj_epsilon_one = 0.0;
+
+  int wca_idx = -1;
+  for (int i = 3; i < narg; i++) {
+    if (strcmp(arg[i], "wca") == 0) {
+      wca_idx = i;
+      break;
+    }
+  }
+
+  if (wca_idx != -1) {
+    wca_flag_one = 1;
+    if (narg != wca_idx + 3)
+      error->all(FLERR, "Incorrect args for pair coefficients: wca requires 2 parameters");
+    
+    lj_sigma_one = utils::numeric(FLERR, arg[wca_idx + 1], false, lmp);
+    lj_epsilon_one = utils::numeric(FLERR, arg[wca_idx + 2], false, lmp);
+
+    if (wca_idx == 4) {
+      cut_one = utils::numeric(FLERR, arg[3], false, lmp);
+    } else if (wca_idx != 3) {
+      error->all(FLERR, "Incorrect args for pair coefficients");
+    }
+
+  } else {
+    if (narg == 4) {
+      cut_one = utils::numeric(FLERR, arg[3], false, lmp);
+    }
+  }
+
   if (cut_one <= 0.0) error->all(FLERR, "Invalid cutoff specified for pair coefficients");
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
     for (int j = MAX(jlo, i); j <= jhi; j++) {
       epsilon[i][j] = epsilon_one;
-      k_exp[i][j] = k_one;
       cut[i][j] = cut_one;
+      wca_flag[i][j] = wca_flag_one;
+      lj_sigma[i][j] = lj_sigma_one;
+      lj_epsilon[i][j] = lj_epsilon_one;
       setflag[i][j] = 1;
       count++;
     }
@@ -106,35 +143,44 @@ void PairNematicAlign::init_style()
   if (!atom->mu_flag || !atom->torque_flag)
     error->all(FLERR, "Pair style 'nematic/align' requires atom attributes mu and torque");
 
-  if (!allocated) allocate();
-
   neighbor->add_request(this);
 }
 
 double PairNematicAlign::init_one(int i, int j)
 {
-
-  if (i > j) {
-    epsilon[i][j] = epsilon[j][i];
-    k_exp[i][j] = k_exp[j][i];
-    cut[i][j] = cut[j][i];
+  if (!setflag[i][j]) {
+    epsilon[i][j] = 0.0;
+    cut[i][j] = 0.0;
+    wca_flag[i][j] = 0;
+    lj_sigma[i][j] = 0.0;
+    lj_epsilon[i][j] = 0.0;
   }
 
-  return cut[i][j];
-}
+  epsilon[j][i] = epsilon[i][j];
+  cut[j][i] = cut[i][j];
+  wca_flag[j][i] = wca_flag[i][j];
+  lj_sigma[j][i] = lj_sigma[i][j];
+  lj_epsilon[j][i] = lj_epsilon[i][j];
 
+  double nematic_cut = cut[i][j];
+  double wca_cut = 0.0;
+  if (wca_flag[i][j] && lj_sigma[i][j] > 0.0) {
+      wca_cut = 1.12246204831 * lj_sigma[i][j];
+  }
+  
+  return MAX(nematic_cut, wca_cut);
+}
 
 void PairNematicAlign::compute(int eflag, int vflag)
 {
   int i, j, ii, jj, inum, jnum, itype, jtype;
   double xtmp, ytmp, ztmp, delx, dely, delz, rsq;
   double r, r_over_rcut, rinv;
-  double mu_dot_mu, abs_mu_dot_mu;
+  double mu_dot_mu;
   double mu1_dot_rij, mu2_dot_rij;
-  double energy, force_magnitude_over_r;
-  double fx, fy, fz;
-  double torque_common, tix, tiy, tiz, tjx, tjy, tjz;
-  double eps, k, rc;
+  double energy, fx, fy, fz;
+  double tix, tiy, tiz, tjx, tjy, tjz;
+  double eps, rc;
   double evdwl;
   int *ilist, *jlist, *numneigh, **firstneigh;
 
@@ -154,7 +200,6 @@ void PairNematicAlign::compute(int eflag, int vflag)
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
 
-  // loop over neighbors
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
     xtmp = x[i][0];
@@ -177,128 +222,112 @@ void PairNematicAlign::compute(int eflag, int vflag)
       if (rsq < cutsq[itype][jtype]) {
         r = sqrt(rsq);
         rinv = 1.0 / r;
-        eps = epsilon[itype][jtype];
-        k = k_exp[itype][jtype];
+
+        energy = 0.0;
+        fx = 0.0; fy = 0.0; fz = 0.0;
+        tix = 0.0; tiy = 0.0; tiz = 0.0;
+        tjx = 0.0; tjy = 0.0; tjz = 0.0;
+
+        // WCA repulsion (if enabled)
+        if (wca_flag[itype][jtype]) {
+            double lj_s = lj_sigma[itype][jtype];
+            double wca_cut = 1.12246204831 * lj_s;
+            if (r < wca_cut) {
+                double lj_e = lj_epsilon[itype][jtype];
+                double sr2 = lj_s * lj_s / rsq;
+                double sr6 = sr2 * sr2 * sr2;
+                double sr12 = sr6 * sr6;
+                double wca_force_over_r = 48.0 * lj_e * (sr12 - 0.5 * sr6) * rinv * rinv;
+
+                fx += wca_force_over_r * delx;
+                fy += wca_force_over_r * dely;
+                fz += wca_force_over_r * delz;
+                if (eflag) energy += 4.0 * lj_e * (sr12 - sr6) + lj_e;
+            }
+        }
+
+        // alignment interaction calculation
         rc = cut[itype][jtype];
+        if (r < rc && mu[i][3] > 0.0 && mu[j][3] > 0.0) {
+            eps = epsilon[itype][jtype];
+            if (rc <= 0.0) { rc = cut_global; }
+            if (rc <= 0.0) {
+                error->all(FLERR, "Cutoff must be set for pair coefficients in nematic/align");
+            }
 
-        // I have no idea why this is needed, cutoff should be set correctly by coeffs()
-        if (rc <= 0.0) { rc = cut_global; }
+            r_over_rcut = r / rc;
 
-        if (rc <= 0.0) {
-          error->all(FLERR, "Cutoff must be set for pair coefficients in nematic/align");
+            mu_dot_mu = mu[i][0] * mu[j][0] + mu[i][1] * mu[j][1] + mu[i][2] * mu[j][2];
+            mu1_dot_rij = mu[i][0] * delx + mu[i][1] * dely + mu[i][2] * delz;
+            mu2_dot_rij = mu[j][0] * delx + mu[j][1] * dely + mu[j][2] * delz;
+            
+            double mu_term = mu_dot_mu * mu_dot_mu;
+            double mu1_uij_term = mu1_dot_rij * mu1_dot_rij * rinv * rinv;
+            double mu2_uij_term = mu2_dot_rij * mu2_dot_rij * rinv * rinv;
+            double full_2nd_term = mu1_uij_term * mu2_uij_term;
+
+            if (eflag) {
+                energy += -eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut) * (mu_term + full_2nd_term);
+            }
+
+            // force calculation
+            double force_term1_over_r = -2.0 * (eps / rc) * (1.0 - r_over_rcut) * mu_term * rinv;
+            double force_term2_over_r = 2.0 * rinv * rinv * full_2nd_term * eps * (1.0 - r_over_rcut) * (2.0 - r_over_rcut);
+            double force_term3_mag = 2.0 * eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut) * rinv * rinv * mu2_uij_term * mu1_dot_rij;
+            double force_term4_mag = 2.0 * eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut) * rinv * rinv * mu1_uij_term * mu2_dot_rij;
+
+            fx += (force_term1_over_r - force_term2_over_r) * delx + force_term3_mag * mu[i][0] + force_term4_mag * mu[j][0];
+            fy += (force_term1_over_r - force_term2_over_r) * dely + force_term3_mag * mu[i][1] + force_term4_mag * mu[j][1];
+            fz += (force_term1_over_r - force_term2_over_r) * delz + force_term3_mag * mu[i][2] + force_term4_mag * mu[j][2];
+
+            // torque calculation
+            double torque_common = 2.0 * eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut);
+            
+            double ti1_mag = torque_common * mu_dot_mu;
+            double tix1 = ti1_mag * (mu[i][1] * mu[j][2] - mu[i][2] * mu[j][1]);
+            double tiy1 = ti1_mag * (mu[i][2] * mu[j][0] - mu[i][0] * mu[j][2]);
+            double tiz1 = ti1_mag * (mu[i][0] * mu[j][1] - mu[i][1] * mu[j][0]);
+
+            double ti2_mag = torque_common * rinv * rinv * mu2_uij_term * mu1_dot_rij;
+            double tix2 = ti2_mag * (mu[i][1] * delz - mu[i][2] * dely);
+            double tiy2 = ti2_mag * (mu[i][2] * delx - mu[i][0] * delz);
+            double tiz2 = ti2_mag * (mu[i][0] * dely - mu[i][1] * delx);
+            
+            tix = tix1 + tix2;
+            tiy = tiy1 + tiy2;
+            tiz = tiz1 + tiz2;
+
+            double tj2_mag = torque_common * rinv * rinv * mu1_uij_term * mu2_dot_rij;
+            double tjx2 = tj2_mag * (mu[j][1] * delz - mu[j][2] * dely);
+            double tjy2 = tj2_mag * (mu[j][2] * delx - mu[j][0] * delz);
+            double tjz2 = tj2_mag * (mu[j][0] * dely - mu[j][1] * delx);
+
+            tjx = -tix1 + tjx2;
+            tjy = -tiy1 + tjy2;
+            tjz = -tiz1 + tjz2;
+        }
+        
+        // total force and torque accumulation ---
+        if (eflag) evdwl = energy;
+
+        f[i][0] += fx;
+        f[i][1] += fy;
+        f[i][2] += fz;
+        torque[i][0] += tix;
+        torque[i][1] += tiy;
+        torque[i][2] += tiz;
+
+        if (newton_pair || j < nlocal) {
+          f[j][0] -= fx;
+          f[j][1] -= fy;
+          f[j][2] -= fz;
+          torque[j][0] += tjx;
+          torque[j][1] += tjy;
+          torque[j][2] += tjz;
         }
 
-        // interaction applies only to particles with dipoles
-        if (mu[i][3] > 0.0 && mu[j][3] > 0.0) {
-
-          mu_dot_mu = mu[i][0] * mu[j][0] + mu[i][1] * mu[j][1] + mu[i][2] * mu[j][2];
-          mu1_dot_rij = mu[i][0] * delx + mu[i][1] * dely + mu[i][2] * delz;
-          mu2_dot_rij = mu[j][0] * delx + mu[j][1] * dely + mu[j][2] * delz;
-          // abs_mu_dot_mu = fabs(mu_dot_mu);
-          r_over_rcut = r / rc;
-
-          // double mu_term = pow(abs_mu_dot_mu, k);
-          double mu_term = mu_dot_mu * mu_dot_mu;
-          double mu1_uij_term = mu1_dot_rij * mu1_dot_rij * rinv * rinv;
-          double mu2_uij_term = mu2_dot_rij * mu2_dot_rij * rinv * rinv;
-          double full_2nd_term = mu1_uij_term * mu2_uij_term;
-
-          // energy calculation: U = -epsilon * (1 - r/r_cut)^2 * [(mu_1 . mu_2)^2 + (mu_1 . uij)^2 (mu_2 . uij)^2]
-          if (eflag) {
-            energy = -eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut) * (mu_term + full_2nd_term);
-            evdwl = energy;
-          } else {
-            energy = 0.0;
-          }
-
-          // force calculation: F = -grad(U)
-          double force_magnitude_over_r_term1 =
-              -2 * (eps / rc) * (1.0 - r_over_rcut) * mu_term * rinv;
-
-          double grad_term2_part1_magnitude =
-              -2 * rinv * rinv * full_2nd_term * eps * (1.0 - r_over_rcut) * (2.0 - r_over_rcut);
-
-          double grad_term2_part2_i_magnitude = 2 * eps * (1.0 - r_over_rcut) *
-              (1.0 - r_over_rcut) * rinv * rinv * mu2_uij_term * mu1_dot_rij;
-
-          double grad_term2_part2_j_magnitude = 2 * eps * (1.0 - r_over_rcut) *
-              (1.0 - r_over_rcut) * rinv * rinv * mu1_uij_term * mu2_dot_rij;
-
-          fx = (force_magnitude_over_r_term1 + grad_term2_part1_magnitude) * delx +
-              grad_term2_part2_i_magnitude * mu[i][0] + grad_term2_part2_j_magnitude * mu[j][0];
-
-          fy = (force_magnitude_over_r_term1 + grad_term2_part1_magnitude) * dely +
-              grad_term2_part2_i_magnitude * mu[i][1] + grad_term2_part2_j_magnitude * mu[j][1];
-
-          fz = (force_magnitude_over_r_term1 + grad_term2_part1_magnitude) * delz +
-              grad_term2_part2_i_magnitude * mu[i][2] + grad_term2_part2_j_magnitude * mu[j][2];
-
-          // torque calculation: T_i = eps*(1-r/rc)*k*|s|^(k-1)*sgn(s)*(mu_i x mu_j)
-          // with s = mu_i . mu_j
-          tix = tiy = tiz = tjx = tjy = tjz = 0.0;
-
-          // Common prefactor for all torque terms
-          double torque_common = 2 * eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut);
-
-          // --- Calculate Torque on Particle i (Ti = Ti,1 + Ti,2) ---
-
-          // Term 1 for particle i (Ti,1)
-          double ti1_mag = torque_common * mu_dot_mu;
-          double tix1 = ti1_mag * (mu[i][1] * mu[j][2] - mu[i][2] * mu[j][1]);
-          double tiy1 = ti1_mag * (mu[i][2] * mu[j][0] - mu[i][0] * mu[j][2]);
-          double tiz1 = ti1_mag * (mu[i][0] * mu[j][1] - mu[i][1] * mu[j][0]);
-
-          // Term 2 for particle i (Ti,2) - THIS WAS MISSING
-          double ti2_mag = torque_common * rinv * rinv * mu2_uij_term * mu1_dot_rij;
-          double tix2 = ti2_mag * (mu[i][1] * delz - mu[i][2] * dely);
-          double tiy2 = ti2_mag * (mu[i][2] * delx - mu[i][0] * delz);
-          double tiz2 = ti2_mag * (mu[i][0] * dely - mu[i][1] * delx);
-
-          // Total torque on i
-          double tix = tix1 + tix2;
-          double tiy = tiy1 + tiy2;
-          double tiz = tiz1 + tiz2;
-
-
-          // --- Calculate Torque on Particle j (Tj = Tj,1 + Tj,2) ---
-
-          // Term 1 for particle j is the negative of Term 1 for i (Tj,1 = -Ti,1)
-          double tjx1 = -tix1;
-          double tjy1 = -tiy1;
-          double tjz1 = -tiz1;
-
-          // Term 2 for particle j (Tj,2)
-          double tj2_mag = torque_common * rinv * rinv * mu1_uij_term * mu2_dot_rij;
-          double tjx2 = tj2_mag * (mu[j][1] * delz - mu[j][2] * dely);
-          double tjy2 = tj2_mag * (mu[j][2] * delx - mu[j][0] * delz);
-          double tjz2 = tj2_mag * (mu[j][0] * dely - mu[j][1] * delx);
-
-          // Total torque on j
-          double tjx = tjx1 + tjx2;
-          double tjy = tjy1 + tjy2;
-          double tjz = tjz1 + tjz2;
-
-
-          // --- Accumulate forces and torques ---
-          f[i][0] += fx;
-          f[i][1] += fy;
-          f[i][2] += fz;
-          torque[i][0] += tix;
-          torque[i][1] += tiy;
-          torque[i][2] += tiz;
-
-          if (newton_pair || j < nlocal) {
-            f[j][0] -= fx;
-            f[j][1] -= fy;
-            f[j][2] -= fz;
-            torque[j][0] += tjx;
-            torque[j][1] += tjy;
-            torque[j][2] += tjz;
-          }
-
-          if (evflag)
-            ev_tally_xyz(i, j, nlocal, newton_pair, evdwl, 0.0, fx, fy, fz, delx, dely, delz);
-        }
+        if (evflag)
+          ev_tally_xyz(i, j, nlocal, newton_pair, evdwl, 0.0, fx, fy, fz, delx, dely, delz);
       }
     }
   }
