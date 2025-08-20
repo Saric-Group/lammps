@@ -272,13 +272,13 @@ void PairNematicAlign::compute(int eflag, int vflag)
 
             // force calculation
             double force_term1_over_r = -2.0 * (eps / rc) * (1.0 - r_over_rcut) * mu_term * rinv;
-            double force_term2_over_r = 2.0 * rinv * rinv * full_2nd_term * eps * (1.0 - r_over_rcut) * (2.0 - r_over_rcut);
+            double force_term2_over_r = -2.0 * rinv * rinv * full_2nd_term * eps * (1.0 - r_over_rcut) * (2.0 - r_over_rcut);
             double force_term3_mag = 2.0 * eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut) * rinv * rinv * mu2_uij_term * mu1_dot_rij;
             double force_term4_mag = 2.0 * eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut) * rinv * rinv * mu1_uij_term * mu2_dot_rij;
 
-            fx += (force_term1_over_r - force_term2_over_r) * delx + force_term3_mag * mu[i][0] + force_term4_mag * mu[j][0];
-            fy += (force_term1_over_r - force_term2_over_r) * dely + force_term3_mag * mu[i][1] + force_term4_mag * mu[j][1];
-            fz += (force_term1_over_r - force_term2_over_r) * delz + force_term3_mag * mu[i][2] + force_term4_mag * mu[j][2];
+            fx += (force_term1_over_r + force_term2_over_r) * delx + force_term3_mag * mu[i][0] + force_term4_mag * mu[j][0];
+            fy += (force_term1_over_r + force_term2_over_r) * dely + force_term3_mag * mu[i][1] + force_term4_mag * mu[j][1];
+            fz += (force_term1_over_r + force_term2_over_r) * delz + force_term3_mag * mu[i][2] + force_term4_mag * mu[j][2];
 
             // torque calculation
             double torque_common = 2.0 * eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut);
