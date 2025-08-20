@@ -27,8 +27,12 @@ class PairNematicAlign : public Pair {
  protected:
   double cut_global;
   double **epsilon;
-  double **k_exp;
   double **cut;
+
+  int **wca_flag;
+  double **lj_sigma;
+  double **lj_epsilon;
+
 
   virtual void allocate();
 };
