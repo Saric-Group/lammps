@@ -4229,8 +4229,8 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
     }
   }
 
-//@andraz-gnidovec: added new insertion logic that takes into account energy of the inserted particles (if energy_check_flag is set)
-int abortflag = 0;
+  //@andraz-gnidovec: added new insertion logic that takes into account energy of the inserted particles (if energy_check_flag is set)
+  int abortflag = 0;
   bool overlap_failed = false;
 
   // if enabled, first perform overlap check 
@@ -4271,10 +4271,9 @@ int abortflag = 0;
   }
 
   // decide whether to abort, perform Metropolis check, or accept
-  // energy calculation is required if:
-  // - overlap failed and an energy check is available to rescue it
-  // - overlap passed (or wasn't performed)
-  if ((overlap_failed && energy_check_flag[rxnID]) || (!overlap_failed && energy_check_flag[rxnID])) {
+  // energy calculation is required if overlap failed and an energy check is available to rescue it
+  // or if overlap check is disabled but energy check is enabled
+  if ((overlap_failed && energy_check_flag[rxnID]) || (overlapsq[rxnID] == 0.0 && energy_check_flag[rxnID])) {
       double fforce;  // dummy variable required by force signature
       double E_new_vs_old = 0.0, E_new_vs_new = 0.0;
       
