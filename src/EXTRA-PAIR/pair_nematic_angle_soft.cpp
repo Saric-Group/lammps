@@ -19,7 +19,6 @@
 
 using namespace LAMMPS_NS;
 
-
 PairNematicSoft::PairNematicSoft(LAMMPS *lmp) : Pair(lmp)
 {
   single_enable = 1;
@@ -75,7 +74,8 @@ void PairNematicSoft::settings(int narg, char **arg)
 void PairNematicSoft::coeff(int narg, char **arg)
 {
   // i j A kappa theta0 [cut]
-  if (narg != 5 && narg != 6) error->all(FLERR, "Incorrect args for pair_coeff in nematic/angle/soft");
+  if (narg != 5 && narg != 6)
+    error->all(FLERR, "Incorrect args for pair_coeff in nematic/angle/soft");
   if (!allocated) allocate();
 
   int ilo, ihi, jlo, jhi;
@@ -131,18 +131,16 @@ double PairNematicSoft::init_one(int i, int j)
     cut[i][j] = 0.0;
   }
 
-  if (i > j) {
-    Aamp[i][j] = Aamp[j][i];
-    kappa[i][j] = kappa[j][i];
-    theta0[i][j] = theta0[j][i];
-    c0[i][j] = c0[j][i];
-    s0[i][j] = s0[j][i];
-    c0s0[i][j] = c0s0[j][i];
-    cos2t0[i][j] = cos2t0[j][i];
-    cut[i][j] = cut[j][i];
-    c_fac[i][j] = c_fac[j][i];
-    setflag[i][j] = setflag[j][i];
-  }
+  Aamp[j][i] = Aamp[i][j];
+  kappa[j][i] = kappa[i][j];
+  theta0[j][i] = theta0[i][j];
+  c0[j][i] = c0[i][j];
+  s0[j][i] = s0[i][j];
+  c0s0[j][i] = c0s0[i][j];
+  cos2t0[j][i] = cos2t0[i][j];
+  cut[j][i] = cut[i][j];
+  c_fac[j][i] = c_fac[i][j];
+  setflag[j][i] = setflag[i][j];
 
   return cut[i][j];
 }
@@ -220,6 +218,7 @@ void PairNematicSoft::compute(int eflag, int vflag)
       double sinhR = sinh(Rth);
 
       double Uang = 1.0 - 2.0 * eS * coshR * c_fac_ij;
+      // double Uang = 1.0;
 
       // soft radial factor and derivative
       // S(r) = A [1 + cos(pi r / rc)] for r < rc
@@ -239,6 +238,7 @@ void PairNematicSoft::compute(int eflag, int vflag)
 
       // torque from angular derivative: dU/dθ
       double dUang_dtheta = 8.0 * kij * eS * (sc * cos2t0ij * coshR - c0s0ij * (c2 - s2) * sinhR) * c_fac_ij;
+      // double dUang_dtheta = 0.0;
 
       double tau_i_z = -Sr * dUang_dtheta;
       double tau_j_z = Sr * dUang_dtheta;
@@ -263,13 +263,15 @@ void PairNematicSoft::compute(int eflag, int vflag)
   if (vflag_fdotr) virial_fdotr_compute();
 }
 
-double PairNematicSoft::single(int i, int j, int itype, int jtype,
-                               double rsq, double factor_coul, double factor_lj,
-                               double &fforce)
+double PairNematicSoft::single(int i, int j, int itype, int jtype, double rsq, double factor_coul,
+                               double factor_lj, double &fforce)
 {
   // cutoff guard
   double rc = cut[itype][jtype] > 0.0 ? cut[itype][jtype] : cut_global;
-  if (rc <= 0.0 || rsq >= rc*rc) { fforce = 0.0; return 0.0; }
+  if (rc <= 0.0 || rsq >= rc * rc) {
+    fforce = 0.0;
+    return 0.0;
+  }
 
   double Aij = Aamp[itype][jtype];
   double kij = kappa[itype][jtype];
@@ -279,21 +281,23 @@ double PairNematicSoft::single(int i, int j, int itype, int jtype,
   double c_fac_ij = c_fac[itype][jtype];
 
   double **mu = atom->mu;
-  double c = mu[i][0] * mu[j][0] + mu[i][1] * mu[j][1];      // xy dot
-  double s = mu[i][0] * mu[j][1] - mu[i][1] * mu[j][0];      // z-comp of cross
+  double c = mu[i][0] * mu[j][0] + mu[i][1] * mu[j][1];    // xy dot
+  double s = mu[i][0] * mu[j][1] - mu[i][1] * mu[j][0];    // z-comp of cross
 
-  double c2 = c*c, s2 = s*s, sc = s*c;
+  double c2 = c * c, s2 = s * s, sc = s * c;
 
   double Sth = -2.0 * kij * (s2 * c0ij * c0ij + c2 * s0ij * s0ij);
-  double Rth =  4.0 * kij * (sc * c0s0ij);
-  double Uang = 1.0 - 2.0 * exp(Sth) * cosh(Rth) * c_fac_ij;
+  double Rth = 4.0 * kij * (sc * c0s0ij);
+  // double Uang = 1.0 - 2.0 * exp(Sth) * cosh(Rth) * c_fac_ij;
+  double Uang = 1.0;
 
   double r = sqrt(rsq);
   double xarg = M_PI * r / rc;
-  double Sr   = Aij * (1.0 + cos(xarg));
-  double dSdr = -Aij * (M_PI/rc) * sin(xarg) / r;  // this is divided by r also in og pair_soft implementation
+  double Sr = Aij * (1.0 + cos(xarg));
+  double dSdr = -Aij * (M_PI / rc) * sin(xarg) /
+      r;    // this is divided by r also in og pair_soft implementation
 
   double energy = Sr * Uang;
-  fforce = (-dSdr * Uang) * factor_lj;   // -dU/dr
+  fforce = (-dSdr * Uang) * factor_lj;    // -dU/dr
   return energy * factor_lj;
 }
