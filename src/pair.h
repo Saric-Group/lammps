@@ -101,6 +101,8 @@ class Pair : protected Pointers {
   int ncoulshiftbits, ncoulmask;
   int ndispshiftbits, ndispmask;
 
+  int orientation_flag; // 1 if pair style supports single_orientation()
+
   int nextra;         // # of extra quantities pair style calculates
   double *pvector;    // vector of extra pair quantities
 
@@ -163,6 +165,12 @@ class Pair : protected Pointers {
   virtual double single(int, int, int, int, double, double, double, double &fforce)
   {
     fforce = 0.0;
+    return 0.0;
+  }
+
+  virtual double single_orientation(int itype, int jtype, double rsq, double factor_lj,
+                                    const double *mu_i, const double *mu_j)
+  {
     return 0.0;
   }
 

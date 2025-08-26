@@ -71,7 +71,7 @@ class FixBondReact : public Fix {
   int lifetime_flag; // @FelixWodaczek/lifetime flag for lifetime keyword
   int hydrolysis_seed; // @FelixWodaczek/lifetime seed for hydrolysis keyword
   int *energy_check_flag; //@andraz-gnidovec: flag for energy check keyword
-  double *energy_temp; // @andraz-gnidovec: max energy for accepting reactions
+  double *energy_temp; // @andraz-gnidovec: temperature for metropolis criterion in energy check
   int custom_exclude_flag;
   int **rate_limit;
   int **store_rxn_count;

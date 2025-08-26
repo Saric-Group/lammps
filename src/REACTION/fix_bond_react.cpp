@@ -4289,7 +4289,12 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             rsq = delx*delx + dely*dely + delz*delz;
             int existing_type = atom->type[i];
             if (rsq < force->pair->cutsq[new_type][existing_type]) {
-              E_new_vs_old += force->pair->single(0, 0, new_type, existing_type, rsq, 1.0, 1.0, fforce);
+              if (force->pair->orientation_flag) {
+                E_new_vs_old += force->pair->single_orientation(new_type, atom->type[i], rsq, 1.0, rotated_mus[m], atom->mu[i]);
+            } else {
+                double fforce;
+                E_new_vs_old += force->pair->single(0, 0, new_type, atom->type[i], rsq, 1.0, 1.0, fforce);
+            }
             }
           }
         }
@@ -4308,7 +4313,12 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
               int type1 = twomol->type[m];
               int type2 = twomol->type[m2];
               if (rsq < force->pair->cutsq[type1][type2]) {
-                E_new_vs_new += force->pair->single(0, 0, type1, type2, rsq, 1.0, 1.0, fforce);
+                if (force->pair->orientation_flag) {
+                  E_new_vs_new += force->pair->single_orientation(twomol->type[m], twomol->type[m2], rsq, 1.0, rotated_mus[m], rotated_mus[m2]);
+              } else {
+                  double fforce;
+                  E_new_vs_new += force->pair->single(0, 0, twomol->type[m], twomol->type[m2], rsq, 1.0, 1.0, fforce);
+              }
               }
             }
           }
