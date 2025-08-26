@@ -432,6 +432,7 @@ void PairHybrid::flags()
     if (styles[m]->dipoleflag) dipoleflag = 1;
     if (styles[m]->spinflag) spinflag = 1;
     if (styles[m]->dispersionflag) dispersionflag = 1;
+    if (styles[m]->orientation_flag) orientation_flag = 1;
     if (styles[m]->tip4pflag) tip4pflag = 1;
     if (styles[m]->compute_flag) compute_flag = 1;
     if (styles[m]->finitecutflag) finitecutflag = 1;
@@ -1190,4 +1191,34 @@ double PairHybrid::memory_usage()
   bytes += (double)maxcvatom*9 * sizeof(double);
   for (int m = 0; m < nstyles; m++) bytes += styles[m]->memory_usage();
   return bytes;
+}
+
+// @andraz-gnidovec: added a new dispatcher for single_orientation method
+double PairHybrid::single_orientation(int itype, int jtype, double rsq,
+                                      double factor_lj, const double *mu_i,
+                                      const double *mu_j)
+{
+  if (nmap[itype][jtype] == 0)
+    error->one(FLERR,"Invoked pair single_orientation on pair style none");
+
+  double esum = 0.0;
+
+  // Loop over all sub-styles assigned to this pair of atom types
+  // (for hybrid/overlay, this could be more than one)
+  for (int m = 0; m < nmap[itype][jtype]; m++) {
+    int sub_style_index = map[itype][jtype][m];
+    
+    // Check if the sub-style supports the specialized function
+    if (styles[sub_style_index]->orientation_flag) {
+       esum += styles[sub_style_index]->
+         single_orientation(itype, jtype, rsq, factor_lj, mu_i, mu_j);
+    
+    // If not, provide a safe fallback to the generic single() function
+    } else {
+       double fforce_dummy;
+       esum += styles[sub_style_index]->
+         single(0, 0, itype, jtype, rsq, 1.0, factor_lj, fforce_dummy);
+    }
+  }
+  return esum;
 }
