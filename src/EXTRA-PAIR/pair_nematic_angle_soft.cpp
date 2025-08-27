@@ -330,9 +330,10 @@ double PairNematicSoft::single_orientation(int itype, int jtype, double rsq, dou
   double s = mu_i[0] * mu_j[1] - mu_i[1] * mu_j[0];
   double c2 = c*c, s2 = s*s, sc = s*c;
 
-  double Sth = -2.0 * kij * (s2 * c0ij * c0ij + c2 * s0ij * s0ij);
-  double Rth = 4.0 * kij * (sc * c0s0ij);
-  double Uang = 1.0 - 2.0 * exp(Sth) * cosh(Rth) * c_fac_ij;
+  // double Sth = -2.0 * kij * (s2 * c0ij * c0ij + c2 * s0ij * s0ij);
+  // double Rth = 4.0 * kij * (sc * c0s0ij);
+  // double Uang = 1.0 - 2.0 * exp(Sth) * cosh(Rth) * c_fac_ij;
+  double Uang = 1.0 - exp(-2.0 * kij * (s * c0ij + c * s0ij) * (s * c0ij + c * s0ij)) * c_fac_ij;
   Uang *= geometric_correction(s, alphaij, rc);
 
   double r = sqrt(rsq);
