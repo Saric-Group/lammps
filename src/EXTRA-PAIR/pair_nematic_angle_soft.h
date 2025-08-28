@@ -33,6 +33,7 @@ class PairNematicSoft : public Pair {
   double **kappa;
   double **theta0;
   double **alpha;  // geometric correction parameter
+  double ** epsilon; // depth of the potential well
   double **c0, **s0, **c0s0, **cos2t0, **c_fac; // cached trig
   double **cut;
 
