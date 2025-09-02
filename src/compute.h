@@ -113,7 +113,9 @@ class Compute : protected Pointers {
   Compute(class LAMMPS *, int, char **);
   ~Compute() override;
   void modify_params(int, char **);
+  virtual int modify_param(int, char **) { return 0; }
   virtual void reset_extra_dof();
+  virtual void post_constructor() {}
 
   void init_flags();
   virtual void init() = 0;
@@ -132,7 +134,7 @@ class Compute : protected Pointers {
   virtual int pack_reverse_comm(int, int, double *) { return 0; }
   virtual void unpack_reverse_comm(int, int *, double *) {}
 
-  virtual void reset_grid(){};
+  virtual void reset_grid() {};
 
   virtual int get_grid_by_name(const std::string &, int &) { return -1; };
   virtual void *get_grid_by_index(int) { return nullptr; };

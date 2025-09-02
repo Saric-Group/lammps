@@ -20,7 +20,6 @@
 #include "utils.h"
 
 #include <cmath>
-#include <cstdlib>
 #include <utility>
 
 using namespace LAMMPS_NS;
@@ -65,7 +64,7 @@ Tokenizer::Tokenizer(const Tokenizer &rhs) :
   reset();
 }
 
-Tokenizer::Tokenizer(Tokenizer &&rhs) :
+Tokenizer::Tokenizer(Tokenizer &&rhs) noexcept :
     text(std::move(rhs.text)), separators(std::move(rhs.separators)), ntokens(rhs.ntokens)
 {
   reset();
@@ -78,14 +77,14 @@ Tokenizer &Tokenizer::operator=(const Tokenizer &other)
   return *this;
 }
 
-Tokenizer &Tokenizer::operator=(Tokenizer &&other)
+Tokenizer &Tokenizer::operator=(Tokenizer &&other) noexcept
 {
   Tokenizer tmp(std::move(other));
   swap(tmp);
   return *this;
 }
 
-void Tokenizer::swap(Tokenizer &other)
+void Tokenizer::swap(Tokenizer &other) noexcept
 {
   std::swap(text, other.text);
   std::swap(separators, other.separators);
@@ -221,7 +220,7 @@ ValueTokenizer::ValueTokenizer(const std::string &str, const std::string &separa
 {
 }
 
-ValueTokenizer::ValueTokenizer(ValueTokenizer &&rhs) : tokens(std::move(rhs.tokens)) {}
+ValueTokenizer::ValueTokenizer(ValueTokenizer &&rhs) noexcept : tokens(std::move(rhs.tokens)) {}
 
 ValueTokenizer &ValueTokenizer::operator=(const ValueTokenizer &other)
 {
@@ -230,14 +229,14 @@ ValueTokenizer &ValueTokenizer::operator=(const ValueTokenizer &other)
   return *this;
 }
 
-ValueTokenizer &ValueTokenizer::operator=(ValueTokenizer &&other)
+ValueTokenizer &ValueTokenizer::operator=(ValueTokenizer &&other) noexcept
 {
   ValueTokenizer tmp(std::move(other));
   swap(tmp);
   return *this;
 }
 
-void ValueTokenizer::swap(ValueTokenizer &other)
+void ValueTokenizer::swap(ValueTokenizer &other) noexcept
 {
   std::swap(tokens, other.tokens);
 }
@@ -371,7 +370,7 @@ double ValueTokenizer::next_double()
     char *end;
     auto val = std::strtod(current.c_str(), &end);
     // return value of denormal
-    if ((val != 0.0) && (val > -HUGE_VAL) && (val < HUGE_VAL)) return val;
+    if ((val > -HUGE_VAL) && (val < HUGE_VAL)) return val;
     throw InvalidFloatException(current);
   } catch (std::invalid_argument const &) {
     throw InvalidFloatException(current);

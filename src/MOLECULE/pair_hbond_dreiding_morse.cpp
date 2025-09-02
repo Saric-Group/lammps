@@ -129,14 +129,14 @@ void PairHbondDreidingMorse::compute(int eflag, int vflag)
           delr1[0] = x[i][0] - x[k][0];
           delr1[1] = x[i][1] - x[k][1];
           delr1[2] = x[i][2] - x[k][2];
-          domain->minimum_image(delr1);
+          domain->minimum_image(FLERR, delr1);
           rsq1 = delr1[0]*delr1[0] + delr1[1]*delr1[1] + delr1[2]*delr1[2];
           r1 = sqrt(rsq1);
 
           delr2[0] = x[j][0] - x[k][0];
           delr2[1] = x[j][1] - x[k][1];
           delr2[2] = x[j][2] - x[k][2];
-          domain->minimum_image(delr2);
+          domain->minimum_image(FLERR, delr2);
           rsq2 = delr2[0]*delr2[0] + delr2[1]*delr2[1] + delr2[2]*delr2[2];
           r2 = sqrt(rsq2);
 
@@ -147,6 +147,13 @@ void PairHbondDreidingMorse::compute(int eflag, int vflag)
           if (c > 1.0) c = 1.0;
           if (c < -1.0) c = -1.0;
           ac = acos(c);
+
+          if (angle_offset_flag){
+            ac = ac + pm.angle_offset;
+            c = cos(ac);
+            if (c > 1.0) c = 1.0;
+            if (c < -1.0) c = -1.0;
+          }
 
           if (ac > pm.cut_angle && ac < (2.0*MY_PI - pm.cut_angle)) {
             s = sqrt(1.0 - c*c);
@@ -239,8 +246,10 @@ void PairHbondDreidingMorse::compute(int eflag, int vflag)
 
 void PairHbondDreidingMorse::coeff(int narg, char **arg)
 {
-  if (narg < 7 || narg > 11)
-    error->all(FLERR,"Incorrect args for pair coefficients");
+  int maxarg = 12;
+  if (angle_offset_flag == 1) maxarg = 12;
+  if (narg < 7 || narg > maxarg)
+    error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi,klo,khi;
@@ -251,7 +260,7 @@ void PairHbondDreidingMorse::coeff(int narg, char **arg)
   int donor_flag;
   if (strcmp(arg[3],"i") == 0) donor_flag = 0;
   else if (strcmp(arg[3],"j") == 0) donor_flag = 1;
-  else error->all(FLERR,"Incorrect args for pair coefficients");
+  else error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
 
   double d0_one = utils::numeric(FLERR, arg[4], false, lmp);
   double alpha_one = utils::numeric(FLERR, arg[5], false, lmp);
@@ -309,7 +318,7 @@ void PairHbondDreidingMorse::coeff(int narg, char **arg)
       }
   nparams++;
 
-  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
 }
 
 /* ----------------------------------------------------------------------
@@ -425,14 +434,14 @@ double PairHbondDreidingMorse::single(int i, int j, int itype, int jtype,
     delr1[0] = x[i][0] - x[k][0];
     delr1[1] = x[i][1] - x[k][1];
     delr1[2] = x[i][2] - x[k][2];
-    domain->minimum_image(delr1);
+    domain->minimum_image(FLERR, delr1);
     rsq1 = delr1[0]*delr1[0] + delr1[1]*delr1[1] + delr1[2]*delr1[2];
     r1 = sqrt(rsq1);
 
     delr2[0] = x[j][0] - x[k][0];
     delr2[1] = x[j][1] - x[k][1];
     delr2[2] = x[j][2] - x[k][2];
-    domain->minimum_image(delr2);
+    domain->minimum_image(FLERR, delr2);
     rsq2 = delr2[0]*delr2[0] + delr2[1]*delr2[1] + delr2[2]*delr2[2];
     r2 = sqrt(rsq2);
 
@@ -443,6 +452,13 @@ double PairHbondDreidingMorse::single(int i, int j, int itype, int jtype,
     if (c > 1.0) c = 1.0;
     if (c < -1.0) c = -1.0;
     ac = acos(c);
+
+    if (angle_offset_flag){
+      ac = ac + pm.angle_offset;
+      c = cos(ac);
+      if (c > 1.0) c = 1.0;
+      if (c < -1.0) c = -1.0;
+    }
 
     if (ac < pm.cut_angle || ac > (2.0*MY_PI - pm.cut_angle)) return 0.0;
     s = sqrt(1.0 - c*c);

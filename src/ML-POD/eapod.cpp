@@ -25,6 +25,7 @@
 #include "memory.h"
 #include "tokenizer.h"
 
+#include <algorithm>
 #include <cmath>
 
 // header file. Moved down here to avoid polluting other headers with its defines
@@ -32,7 +33,6 @@
 
 using namespace LAMMPS_NS;
 using MathConst::MY_PI;
-using MathSpecial::cube;
 using MathSpecial::powint;
 
 static constexpr int MAXLINE=1024;
@@ -982,10 +982,14 @@ double EAPOD::peratom_environment_descriptors(double *cb, double *bd, double *tm
     D[j] = 1.0 / sum;
   }
 
-  double sum = 0;
+  double sum = 0.0;
   for (int j = 0; j < nClusters; j++) sum += D[j];
   double sumD = sum;
-  for (int j = 0; j < nClusters; j++) P[j] = D[j]/sum;
+  if (sum != 0.0) {
+    for (int j = 0; j < nClusters; j++) P[j] = D[j]/sum;
+  } else {
+    for (int j = 0; j < nClusters; j++) P[j] = 0.0;
+  }
 
   int nc = nCoeffPerElement*(ti[0]-1);
   double ei = coeff[0 + nc];
@@ -1008,13 +1012,13 @@ double EAPOD::peratom_environment_descriptors(double *cb, double *bd, double *tm
   }
 
   for (int m = 0; m<Mdesc; m++) {
-    double S1 = 1/sumD;
-    double S2 = sumD*sumD;
+    double S1 = 1.0/sumD;
+    double S2 = S1*S1;
     double sum = 0.0;
     for (int j=0; j<nClusters; j++) {
       double dP_dB = 0.0;
       for (int k = 0; k < nClusters; k++) {
-        double dP_dD = -D[j] / S2;
+        double dP_dD = -D[j] * S2;
         if (k==j) dP_dD += S1;
         double dD_dB = 0.0;
         double D2 = 2 * D[k] * D[k];
@@ -2369,7 +2373,6 @@ void EAPOD::snapshots(double *rbf, double *xij, int N)
     for (int i=0; i<inversedegree; i++) {
       int p = besseldegree*nbesselpars + i;
       int nij = n + N*p;
-      //double a = pow(dij, (double) (i+1.0));
       double a = powint(dij, i+1);
 
       // Compute the RBF
@@ -2844,11 +2847,11 @@ void EAPOD::peratomenvironment_descriptors(double *P, double *dP_dR, double *B, 
   DGEMM(&chn, &chn, &nClusters, &Mdesc, &nComponents, &alpha, dD_dpca, &nClusters, ProjMat, &nComponents, &beta, dD_dB, &nClusters);
 
   // calculate dP_dD
-  double S1 = 1 / sumD;
-  double S2 = sumD * sumD;
+  double S1 = 1.0 / sumD;
+  double S2 = S1 * S1;
   for (int k = 0; k < nClusters; k++) {
     for (int j = 0; j < nClusters; j++) {
-      dP_dD[j + k * nClusters] = -D[j] / S2;
+      dP_dD[j + k * nClusters] = -D[j] * S2;
     }
   }
   for (int j = 0; j < nClusters; j++) {

@@ -681,7 +681,7 @@ MPEG or other movie file you can use:
 
 * c) Use FFmpeg
 
-  FFmpeg is a command line tool that is available on many platforms and
+  FFmpeg is a command-line tool that is available on many platforms and
   allows extremely flexible encoding and decoding of movies.
 
   .. code-block:: bash
@@ -710,7 +710,7 @@ Play the movie:
      mplayer foo.mpg
      ffplay bar.avi
 
-* c) Use the `Pizza.py <https://lammps.github.io/pizza>`_
+* c) Use the `Pizza.py <https://lammps.github.io/pizza/>`_
   `animate tool <https://lammps.github.io/pizza/doc/animate.html>`_,
   which works directly on a series of image files.
 

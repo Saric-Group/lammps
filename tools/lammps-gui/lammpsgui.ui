@@ -74,6 +74,7 @@
     <addaction name="actionRun_Buffer"/>
     <addaction name="actionRun_File"/>
     <addaction name="actionStop_LAMMPS"/>
+    <addaction name="separator"/>
     <addaction name="actionRestart_LAMMPS"/>
     <addaction name="separator"/>
     <addaction name="actionSet_Variables"/>
@@ -293,7 +294,7 @@
     <iconset theme=":/icons/system-restart.png"/>
    </property>
    <property name="text">
-    <string>Restart &amp;LAMMPS</string>
+    <string>Relaunch &amp;LAMMPS Instance</string>
    </property>
   </action>
   <action name="actionImage">
@@ -578,7 +579,7 @@
     <iconset theme=":/icons/system-help.png"/>
    </property>
    <property name="text">
-    <string>LAMMPS-&amp;GUI Howto</string>
+    <string>LAMMPS-&amp;GUI Documentation</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+Shift+G</string>

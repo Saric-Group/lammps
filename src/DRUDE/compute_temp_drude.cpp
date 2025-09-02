@@ -30,7 +30,7 @@ using namespace LAMMPS_NS;
 
 ComputeTempDrude::ComputeTempDrude(LAMMPS *lmp, int narg, char **arg) : Compute(lmp, narg, arg)
 {
-  if (narg != 3) error->all(FLERR, "Illegal compute temp command");
+  if (narg != 3) error->all(FLERR, "Incorrect number of arguments for compute temp/drude");
 
   vector_flag = 1;
   scalar_flag = 1;
@@ -62,12 +62,14 @@ ComputeTempDrude::~ComputeTempDrude()
 void ComputeTempDrude::init()
 {
   // Fix drude already checks that there is only one fix drude instance
-  auto &fixes = modify->get_fix_by_style("^drude$");
-  if (fixes.size() == 0) error->all(FLERR, "compute temp/drude requires fix drude");
+  const auto &fixes = modify->get_fix_by_style("^drude$");
+  if (fixes.size() == 0)
+    error->all(FLERR, Error::NOLASTLINE, "compute temp/drude requires fix drude");
   fix_drude = dynamic_cast<FixDrude *>(fixes[0]);
 
   if (!comm->ghost_velocity)
-    error->all(FLERR, "compute temp/drude requires ghost velocities. Use comm_modify vel yes");
+    error->all(FLERR, Error::NOLASTLINE,
+               "compute temp/drude requires ghost velocities. Use comm_modify vel yes");
 }
 
 /* ---------------------------------------------------------------------- */
@@ -101,7 +103,7 @@ void ComputeTempDrude::dof_compute()
   dof_drude_loc *= dim;
   MPI_Allreduce(&dof_core_loc, &dof_core, 1, MPI_LMP_BIGINT, MPI_SUM, world);
   MPI_Allreduce(&dof_drude_loc, &dof_drude, 1, MPI_LMP_BIGINT, MPI_SUM, world);
-  dof_core -= fix_dof;
+  dof_core -= fix_dof; // NOLINT
   vector[2] = dof_core;
   vector[3] = dof_drude;
 }
@@ -170,7 +172,7 @@ void ComputeTempDrude::compute_vector()
             error->one(FLERR, "Drude atom for core atom ID {} is not defined", atom->tag[i]);
           } else {
             error->one(FLERR, "Drude atom ID {} for core atom ID {} is out of range", drudeid[i],
-                     atom->tag[i]);
+                       atom->tag[i]);
           }
         }
         if (rmass) {

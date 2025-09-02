@@ -20,6 +20,12 @@
 class LammpsWrapper {
 public:
     LammpsWrapper();
+    ~LammpsWrapper() = default;
+
+    LammpsWrapper(const LammpsWrapper &)            = delete;
+    LammpsWrapper(LammpsWrapper &&)                 = delete;
+    LammpsWrapper &operator=(const LammpsWrapper &) = delete;
+    LammpsWrapper &operator=(LammpsWrapper &&)      = delete;
 
 public:
     void open(int nargs, char **args);
@@ -45,6 +51,7 @@ public:
     void *extract_atom(const char *keyword);
     double extract_variable(const char *keyword);
 
+    int has_id(const char *idtype, const char *id);
     int id_count(const char *idtype);
     int id_name(const char *idtype, int idx, char *buf, int buflen);
     int style_count(const char *keyword);
@@ -65,6 +72,7 @@ public:
     bool config_has_curl_support() const;
     bool has_gpu_device() const;
 
+    bool load_lib(const QString &fname) { return load_lib(fname.toStdString().c_str()); }
     bool load_lib(const char *lammpslib);
     bool has_plugin() const;
 

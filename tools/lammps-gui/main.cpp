@@ -44,21 +44,30 @@ int main(int argc, char *argv[])
     qputenv("LC_ALL", "en_US.UTF-8");
 #endif
 
+    // disable processor affinity for threads by default
+    qputenv("OMP_PROC_BIND", "false");
+
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName("The LAMMPS Developers");
     QCoreApplication::setOrganizationDomain("lammps.org");
-    QCoreApplication::setApplicationName("LAMMPS-GUI - QT" stringify(QT_VERSION_MAJOR));
+    QCoreApplication::setApplicationName("LAMMPS-GUI (QT" stringify(QT_VERSION_MAJOR) ")");
     QCoreApplication::setApplicationVersion(LAMMPS_GUI_VERSION);
     QCommandLineParser parser;
-    parser.setApplicationDescription(
+    QString description(
         "\nThis is LAMMPS-GUI v" LAMMPS_GUI_VERSION "\n"
         "\nA graphical editor for LAMMPS input files with syntax highlighting and\n"
         "auto-completion that can run LAMMPS directly. It has built-in capabilities\n"
         "for monitoring, visualization, plotting, and capturing console output.");
 #if defined(LAMMPS_GUI_USE_PLUGIN)
+    description += QString("\n\nCurrent LAMMPS plugin path setting:\n  %1")
+                       .arg(QSettings().value("plugin_path", "").toString());
+#endif
+    parser.setApplicationDescription(description);
+
+#if defined(LAMMPS_GUI_USE_PLUGIN)
     QCommandLineOption plugindir(QStringList() << "p"
                                                << "pluginpath",
-                                 "Path to LAMMPS shared library", "path");
+                                 "Set path to LAMMPS shared library", "path");
     parser.addOption(plugindir);
 #endif
 
@@ -80,7 +89,7 @@ int main(int argc, char *argv[])
 
     QString infile;
     QStringList args = parser.positionalArguments();
-    if (args.size() > 0) infile = args[0];
+    if (!args.empty()) infile = args[0];
     LammpsGui w(nullptr, infile);
     w.show();
     return app.exec();

@@ -22,6 +22,7 @@
 #include "comm.h"
 #include "error.h"
 #include "force.h"
+#include "info.h"
 #include "memory.h"
 #include "neigh_list.h"
 #include "neighbor.h"
@@ -283,7 +284,7 @@ void PairDPDCoulSlaterLong::settings(int narg, char **arg)
 void PairDPDCoulSlaterLong::coeff(int narg, char **arg)
 {
   if (narg < 4 || narg > 6)
-    error->all(FLERR,"Incorrect args for pair coefficients");
+    error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi;
@@ -316,7 +317,7 @@ void PairDPDCoulSlaterLong::coeff(int narg, char **arg)
     }
   }
 
-  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
 }
 
 /* ----------------------------------------------------------------------
@@ -353,7 +354,9 @@ void PairDPDCoulSlaterLong::init_style()
 
 double PairDPDCoulSlaterLong::init_one(int i, int j)
 {
-  if (setflag[i][j] == 0) error->all(FLERR,"All pair coeffs are not set");
+  if (setflag[i][j] == 0)
+    error->all(FLERR, Error::NOLASTLINE,
+               "All pair coeffs are not set. Status:\n" + Info::get_pair_coeff_status(lmp));
 
   sigma[i][j] = sqrt(2.0*force->boltz*temperature*gamma[i][j]);
 

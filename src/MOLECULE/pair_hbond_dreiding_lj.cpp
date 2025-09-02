@@ -13,7 +13,7 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing author: Tod A Pascal (Caltech)
+   Contributing authors: Tod A Pascal (Caltech), Don Xu/EiPi Fun
 ------------------------------------------------------------------------- */
 
 #include "pair_hbond_dreiding_lj.h"
@@ -55,6 +55,9 @@ PairHbondDreidingLJ::PairHbondDreidingLJ(LAMMPS *lmp) : Pair(lmp)
 
   nextra = 2;
   pvector = new double[2];
+
+  angle_offset_flag = 0;
+  angle_offset_global = 0.0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -159,14 +162,14 @@ void PairHbondDreidingLJ::compute(int eflag, int vflag)
           delr1[0] = x[i][0] - x[k][0];
           delr1[1] = x[i][1] - x[k][1];
           delr1[2] = x[i][2] - x[k][2];
-          domain->minimum_image(delr1);
+          domain->minimum_image(FLERR, delr1);
           rsq1 = delr1[0]*delr1[0] + delr1[1]*delr1[1] + delr1[2]*delr1[2];
           r1 = sqrt(rsq1);
 
           delr2[0] = x[j][0] - x[k][0];
           delr2[1] = x[j][1] - x[k][1];
           delr2[2] = x[j][2] - x[k][2];
-          domain->minimum_image(delr2);
+          domain->minimum_image(FLERR, delr2);
           rsq2 = delr2[0]*delr2[0] + delr2[1]*delr2[1] + delr2[2]*delr2[2];
           r2 = sqrt(rsq2);
 
@@ -177,6 +180,13 @@ void PairHbondDreidingLJ::compute(int eflag, int vflag)
           if (c > 1.0) c = 1.0;
           if (c < -1.0) c = -1.0;
           ac = acos(c);
+
+          if (angle_offset_flag){
+            ac = ac + pm.angle_offset;
+            c = cos(ac);
+            if (c > 1.0) c = 1.0;
+            if (c < -1.0) c = -1.0;
+          }
 
           if (ac > pm.cut_angle && ac < (2.0*MY_PI - pm.cut_angle)) {
             s = sqrt(1.0 - c*c);
@@ -297,12 +307,19 @@ void PairHbondDreidingLJ::allocate()
 
 void PairHbondDreidingLJ::settings(int narg, char **arg)
 {
-  if (narg != 4) error->all(FLERR,"Illegal pair_style command");
+
+  // narg = 4 for standard form, narg = 5 or 6 if angleoffset LJ or Morse variants respectively (from EXTRA-MOLECULE)
+  if (narg != 4 && narg != 5) error->all(FLERR,"Illegal pair_style command");
 
   ap_global = utils::inumeric(FLERR,arg[0],false,lmp);
   cut_inner_global = utils::numeric(FLERR,arg[1],false,lmp);
   cut_outer_global = utils::numeric(FLERR,arg[2],false,lmp);
   cut_angle_global = utils::numeric(FLERR,arg[3],false,lmp) * MY_PI/180.0;
+
+  // update when using angleoffset variant
+  if (angle_offset_flag) {
+    angle_offset_global = (180.0 - utils::numeric(FLERR, arg[4], false, lmp)) * MY_PI/180.0;
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -311,8 +328,14 @@ void PairHbondDreidingLJ::settings(int narg, char **arg)
 
 void PairHbondDreidingLJ::coeff(int narg, char **arg)
 {
-  if (narg < 6 || narg > 10)
-    error->all(FLERR,"Incorrect args for pair coefficients");
+  // account for angleoffset variant in EXTRA-MOLECULE
+  int maxarg = 10;
+  if (angle_offset_flag == 1) maxarg = 11;
+
+  // check settings
+  if (narg < 6 || narg > maxarg)
+    error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
+
   if (!allocated) allocate();
 
   int ilo,ihi,jlo,jhi,klo,khi;
@@ -323,7 +346,7 @@ void PairHbondDreidingLJ::coeff(int narg, char **arg)
   int donor_flag;
   if (strcmp(arg[3],"i") == 0) donor_flag = 0;
   else if (strcmp(arg[3],"j") == 0) donor_flag = 1;
-  else error->all(FLERR,"Incorrect args for pair coefficients");
+  else error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
 
   double epsilon_one = utils::numeric(FLERR, arg[4], false, lmp);
   double sigma_one = utils::numeric(FLERR, arg[5], false, lmp);
@@ -340,16 +363,15 @@ void PairHbondDreidingLJ::coeff(int narg, char **arg)
     error->all(FLERR,"Pair inner cutoff >= Pair outer cutoff");
   double cut_angle_one = cut_angle_global;
   if (narg == 10) cut_angle_one = utils::numeric(FLERR, arg[9], false, lmp) * MY_PI/180.0;
+
   // grow params array if necessary
 
   if (nparams == maxparam) {
     maxparam += CHUNK;
-    params = (Param *) memory->srealloc(params, maxparam*sizeof(Param),
-                                        "pair:params");
+    params = (Param *) memory->srealloc(params, maxparam*sizeof(Param), "pair:params");
 
     // make certain all addional allocated storage is initialized
     // to avoid false positives when checking with valgrind
-
     memset(params + nparams, 0, CHUNK*sizeof(Param));
   }
 
@@ -378,7 +400,7 @@ void PairHbondDreidingLJ::coeff(int narg, char **arg)
       }
   nparams++;
 
-  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients");
+  if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients" + utils::errorurl(21));
 }
 
 /* ----------------------------------------------------------------------
@@ -518,14 +540,14 @@ double PairHbondDreidingLJ::single(int i, int j, int itype, int jtype,
     delr1[0] = x[i][0] - x[k][0];
     delr1[1] = x[i][1] - x[k][1];
     delr1[2] = x[i][2] - x[k][2];
-    domain->minimum_image(delr1);
+    domain->minimum_image(FLERR, delr1);
     rsq1 = delr1[0]*delr1[0] + delr1[1]*delr1[1] + delr1[2]*delr1[2];
     r1 = sqrt(rsq1);
 
     delr2[0] = x[j][0] - x[k][0];
     delr2[1] = x[j][1] - x[k][1];
     delr2[2] = x[j][2] - x[k][2];
-    domain->minimum_image(delr2);
+    domain->minimum_image(FLERR, delr2);
     rsq2 = delr2[0]*delr2[0] + delr2[1]*delr2[1] + delr2[2]*delr2[2];
     r2 = sqrt(rsq2);
 
@@ -536,6 +558,13 @@ double PairHbondDreidingLJ::single(int i, int j, int itype, int jtype,
     if (c > 1.0) c = 1.0;
     if (c < -1.0) c = -1.0;
     ac = acos(c);
+
+    if (angle_offset_flag){
+      ac = ac + pm.angle_offset;
+      c = cos(ac);
+      if (c > 1.0) c = 1.0;
+      if (c < -1.0) c = -1.0;
+    }
 
     if (ac < pm.cut_angle || ac > (2.0*MY_PI - pm.cut_angle)) return 0.0;
     s = sqrt(1.0 - c*c);

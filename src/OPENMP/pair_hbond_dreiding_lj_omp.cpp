@@ -201,14 +201,14 @@ void PairHbondDreidingLJOMP::eval(int iifrom, int iito, ThrData * const thr)
           delr1[0] = xtmp - x[k].x;
           delr1[1] = ytmp - x[k].y;
           delr1[2] = ztmp - x[k].z;
-          domain->minimum_image(delr1);
+          domain->minimum_image(FLERR, delr1);
           rsq1 = delr1[0]*delr1[0] + delr1[1]*delr1[1] + delr1[2]*delr1[2];
           r1 = sqrt(rsq1);
 
           delr2[0] = x[j].x - x[k].x;
           delr2[1] = x[j].y - x[k].y;
           delr2[2] = x[j].z - x[k].z;
-          domain->minimum_image(delr2);
+          domain->minimum_image(FLERR, delr2);
           rsq2 = delr2[0]*delr2[0] + delr2[1]*delr2[1] + delr2[2]*delr2[2];
           r2 = sqrt(rsq2);
 
@@ -219,6 +219,13 @@ void PairHbondDreidingLJOMP::eval(int iifrom, int iito, ThrData * const thr)
           if (c > 1.0) c = 1.0;
           if (c < -1.0) c = -1.0;
           ac = acos(c);
+
+          if (angle_offset_flag){
+            ac = ac + pm.angle_offset;
+            c = cos(ac);
+            if (c > 1.0) c = 1.0;
+            if (c < -1.0) c = -1.0;
+          }
 
           if (ac > pm.cut_angle && ac < (2.0*MY_PI - pm.cut_angle)) {
             s = sqrt(1.0 - c*c);

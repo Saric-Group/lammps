@@ -81,7 +81,7 @@ FixAmoebaPiTorsion::FixAmoebaPiTorsion(LAMMPS *lmp, int narg, char **arg) :
   // register with Atom class
 
   nmax_previous = 0;
-  grow_arrays(atom->nmax);
+  FixAmoebaPiTorsion::grow_arrays(atom->nmax);
   atom->add_callback(Atom::GROW);
   atom->add_callback(Atom::RESTART);
 
@@ -774,9 +774,9 @@ bigint FixAmoebaPiTorsion::read_data_skip_lines(char *keyword)
 
 void FixAmoebaPiTorsion::write_data_header(FILE *fp, int mth)
 {
-  if (mth == 0) fmt::print(fp,"{} pitorsions\n",npitorsions);
+  if (mth == 0) utils::print(fp,"{} pitorsions\n",npitorsions);
   else if (mth == 1)
-    fmt::print(fp, "{} pitorsion types\n",npitorsion_types);
+    utils::print(fp, "{} pitorsion types\n",npitorsion_types);
 }
 
 /* ----------------------------------------------------------------------

@@ -663,6 +663,8 @@ colvarvalue colvarvalue::dist2_grad(colvarvalue const &x2) const
 {
   colvarvalue::check_types(*this, x2);
 
+  // Compute derivative with respect to (*this)
+
   switch (this->value_type) {
   case colvarvalue::type_scalar:
     return 2.0 * (this->real_value - x2.real_value);
@@ -672,7 +674,7 @@ colvarvalue colvarvalue::dist2_grad(colvarvalue const &x2) const
     cvm::rvector const &v1 = this->rvector_value;
     cvm::rvector const &v2 = x2.rvector_value;
     cvm::real const cos_t = v1 * v2;
-    return colvarvalue(2.0 * std::acos(cos_t) * -1.0 / cvm::sqrt(1.0 - cos_t * cos_t) * v2,
+    return colvarvalue(2.0 * cvm::acos(cos_t) * -1.0 / cvm::sqrt(1.0 - cos_t * cos_t) * v2,
                        colvarvalue::type_unit3vectorderiv);
   }
   case colvarvalue::type_quaternion:

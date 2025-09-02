@@ -16,7 +16,7 @@
    Contributing authors: Julien Tranchida (SNL)
 
    Please cite the related publication:
-   Bessarab, P. F., Uzdin, V. M., & Jónsson, H. (2015).
+   Bessarab, P. F., Uzdin, V. M., & Jonsson, H. (2015).
    Method for finding mechanism and activation energy of magnetic transitions,
    applied to skyrmion and antivortex annihilation.
    Computer Physics Communications, 196, 335-347.
@@ -95,7 +95,7 @@ NEBSpin::~NEBSpin()
 void NEBSpin::command(int narg, char **arg)
 {
   if (domain->box_exist == 0)
-    error->all(FLERR,"NEBSpin command before simulation box is defined");
+    error->all(FLERR,"NEBSpin command before simulation box is defined" + utils::errorurl(33));
 
   if (narg < 6) error->universe_all(FLERR,"Illegal NEBSpin command");
 
@@ -422,7 +422,7 @@ void NEBSpin::readfile(char *file, int flag)
       error->all(FLERR,"Incorrectly formatted NEB file");
   }
 
-  auto buffer = new char[CHUNK*MAXLINE];
+  auto *buffer = new char[CHUNK*MAXLINE];
   double fraction = ireplica/(nreplica-1.0);
   double **x = atom->x;
   double **sp = atom->sp;
@@ -805,7 +805,7 @@ void NEBSpin::print_status()
     FILE *uscreen = universe->uscreen;
     FILE *ulogfile = universe->ulogfile;
     if (uscreen) {
-      fmt::print(uscreen,"{} {:12.8g} {:12.8g} ",update->ntimestep,fmaxreplica,fmaxatom);
+      utils::print(uscreen,"{} {:12.8g} {:12.8g} ",update->ntimestep,fmaxreplica,fmaxatom);
       fprintf(uscreen,"%12.8g %12.8g %12.8g ",gradvnorm0,gradvnorm1,gradvnormc);
       fprintf(uscreen,"%12.8g %12.8g %12.8g ",ebf,ebr,endpt);
       for (int i = 0; i < nreplica; i++)
@@ -819,7 +819,7 @@ void NEBSpin::print_status()
     }
 
     if (ulogfile) {
-      fmt::print(ulogfile,"{} {:12.8} {:12.8g} ",update->ntimestep,fmaxreplica,fmaxatom);
+      utils::print(ulogfile,"{} {:12.8} {:12.8g} ",update->ntimestep,fmaxreplica,fmaxatom);
       fprintf(ulogfile,"%12.8g %12.8g %12.8g ",gradvnorm0,gradvnorm1,gradvnormc);
       fprintf(ulogfile,"%12.8g %12.8g %12.8g ",ebf,ebr,endpt);
       for (int i = 0; i < nreplica; i++)
