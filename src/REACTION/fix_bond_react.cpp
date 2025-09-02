@@ -4014,7 +4014,6 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         iatom = atom->map(my_update_mega_glove[ipre+1][iupdate]);
         if (iref == -1) iref = iatom;
         iatom = domain->closest_image(iref,iatom);
-        molinit = atom->molecule[iatom];
 
         for (int k = 0; k < 3; k++) {
           xfrozen[fit_incr][k] = x[iatom][k];
