@@ -717,6 +717,11 @@ FixBondReact::~FixBondReact()
   }
   delete[] random;
 
+  if (hydrolysis_random != nullptr) {
+    delete hydrolysis_random;
+    hydrolysis_random = nullptr;
+  }
+
   delete reset_mol_ids;
 
   memory->destroy(partner);
