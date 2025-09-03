@@ -27,6 +27,8 @@
 
 #include <cmath>
 #include <cstring>
+#include <iostream>
+#include "update.h"
 
 using namespace LAMMPS_NS;
 using namespace MathConst;
@@ -59,6 +61,7 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
   int i, j, ii, jj, inum, jnum, itype, jtype;
   double xtmp, ytmp, ztmp, fxtmp, fytmp, fztmp;
   double delx, dely, delz, rsq, factor_lj;
+  double normx, normy, normz, normr;
   int *ilist, *jlist, *numneigh, **firstneigh;
 
   ev_init(eflag, vflag);
@@ -98,19 +101,46 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       rsq = delx * delx + dely * dely + delz * delz;
       jtype = type[j];
 
+      if (jtype == 5) {
+        normx = x[j][0]; 
+        normz = x[j][2];
+        normr = sqrt(normx * normx + normz * normz);
+        normx /= normr;
+        normz /= normr;
+      } else if (itype ==5) {
+        normx = x[i][0];
+        normz = x[i][2];
+        normr = sqrt(normx * normx + normz * normz);
+        normx /= normr;
+        normz /= normr;
+      } else {
+        error->all(FLERR, "Wrong surface type.");
+      }
+
       if (rsq < cutsq[itype][jtype]) {
-        const double r = sqrt(delx * delx + delz * delz); // TODO: normal projection
+        const double r = abs(delx * normx + delz * normz); // TODO: normal projection
         const double delta = r_zero[itype][jtype] - r;
         const double prefactor = factor_lj * delta * k[itype][jtype];
-        const double fpair = 2.0 * prefactor / r;
+        const double fpair = 2.0 * prefactor;
 
-        fxtmp += delx * fpair;
-        fytmp += dely * fpair;
-        fztmp += delz * fpair;
-        if (newton_pair || j < nlocal) {
-          f[j][0] -= delx * fpair;
-          // f[j][1] -= dely * fpair; // TODO: normal projection
-          f[j][2] -= delz * fpair;
+        if (jtype == 5) {
+          fxtmp -= normx * fpair;
+          // fytmp += normy * fpair;
+          fztmp -= normz * fpair;
+          if (newton_pair || j < nlocal) {
+            f[j][0] += normx * fpair;
+            // f[j][1] -= dely * fpair; // TODO: normal projection
+            f[j][2] += normz * fpair;
+          }
+        } else if (itype == 5) {
+          fxtmp += normx * fpair;
+          // fytmp += normy * fpair;
+          fztmp += normz * fpair;
+          if (newton_pair || j < nlocal) {
+            f[j][0] -= normx * fpair;
+            // f[j][1] -= dely * fpair; // TODO: normal projection
+            f[j][2] -= normz * fpair;
+          }
         }
 
         if (evflag) {
@@ -183,7 +213,14 @@ void PairHarmonicSurface::coeff(int narg, char **arg)
       count++;
     }
   }
-
+  for (int i = 0; i < atom->ntypes; i++){
+    for (int j = 0; j < atom->ntypes; j++){
+      if (setflag[i][j]) {
+        std::cout << "r_zero[" << i << "][" << j << "] = " << r_zero[i][j];
+      }
+    }
+    std::cout << std::endl;
+  }
   if (count == 0) error->all(FLERR, "Incorrect args for pair coefficients");
 }
 
@@ -198,6 +235,7 @@ double PairHarmonicSurface::init_one(int i, int j)
     k[i][j] = mix_energy(k[i][i], k[j][j], cut[i][i], cut[j][j]);
   }
   k[j][i] = k[i][j];
+  r_zero[j][i] = r_zero[i][j];
   cut[j][i] = cut[i][j];
   return cut[i][j];
 }
@@ -306,7 +344,7 @@ double PairHarmonicSurface::single(int i, int j, int itype, int jtype, double rs
     fforce = 0.0;
     return 0.0;
   }
-
+  error->all(FLERR, "Using single on accident");
   const double delx = atom->x[i][0] - atom->x[j][0];
   const double dely = atom->x[i][1] - atom->x[j][1];
   const double delz = atom->x[i][2] - atom->x[j][2];
