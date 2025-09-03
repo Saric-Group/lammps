@@ -99,8 +99,8 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       jtype = type[j];
 
       if (rsq < cutsq[itype][jtype]) {
-        const double r = sqrt(rsq);
-        const double delta = cut[itype][jtype] - r;
+        const double r = sqrt(delx * delx + delz * delz); // TODO: normal projection
+        const double delta = r_zero[itype][jtype] - r;
         const double prefactor = factor_lj * delta * k[itype][jtype];
         const double fpair = 2.0 * prefactor / r;
 
@@ -109,7 +109,7 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
         fztmp += delz * fpair;
         if (newton_pair || j < nlocal) {
           f[j][0] -= delx * fpair;
-          f[j][1] -= dely * fpair;
+          // f[j][1] -= dely * fpair; // TODO: normal projection
           f[j][2] -= delz * fpair;
         }
 
@@ -120,7 +120,7 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       }
     }
     f[i][0] += fxtmp;
-    f[i][1] += fytmp;
+    // f[i][1] += fytmp; // TODO: normal projection
     f[i][2] += fztmp;
   }
 
@@ -171,6 +171,7 @@ void PairHarmonicSurface::coeff(int narg, char **arg)
   double k_one = utils::numeric(FLERR, arg[2], false, lmp);
   double r_zero_one = utils::numeric(FLERR, arg[3], false, lmp);
   double cut_one = utils::numeric(FLERR, arg[4], false, lmp);
+  // int surf_type = utils::inumeric(FLERR, arg[5], false, lmp); // TODO: projection, read an extra variable here for which atom type to extract normal from
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -298,15 +299,20 @@ void PairHarmonicSurface::write_data_all(FILE *fp)
 
 /* ---------------------------------------------------------------------- */
 
-double PairHarmonicSurface::single(int /*i*/, int /*j*/, int itype, int jtype, double rsq,
+double PairHarmonicSurface::single(int i, int j, int itype, int jtype, double rsq,
                                double /*factor_coul*/, double factor_lj, double &fforce)
 {
   if (rsq >= cutsq[itype][jtype]) {
     fforce = 0.0;
     return 0.0;
   }
-  const double r = sqrt(rsq);
-  const double delta = cut[itype][jtype] - r;
+
+  const double delx = atom->x[i][0] - atom->x[j][0];
+  const double dely = atom->x[i][1] - atom->x[j][1];
+  const double delz = atom->x[i][2] - atom->x[j][2];
+
+  const double r = sqrt(delx * delx + delz * delz); // TODO: projection
+  const double delta = r_zero[itype][jtype] - r;
   const double philj = factor_lj * delta * delta * k[itype][jtype];
   fforce = 2.0 * philj / (r * delta);
   return philj;
@@ -314,12 +320,15 @@ double PairHarmonicSurface::single(int /*i*/, int /*j*/, int itype, int jtype, d
 
 /* ---------------------------------------------------------------------- */
 
-void PairHarmonicSurface::born_matrix(int /*i*/, int /*j*/, int itype, int jtype, double rsq,
+void PairHarmonicSurface::born_matrix(int i, int j, int itype, int jtype, double rsq,
                             double /*factor_coul*/, double factor_lj, double &dupair,
                             double &du2pair)
 {
-  double r = sqrt(rsq);
-  double dr = r - cut[itype][jtype];
+  const double delx = atom->x[i][0] - atom->x[j][0];
+  const double dely = atom->x[i][1] - atom->x[j][1];
+  const double delz = atom->x[i][2] - atom->x[j][2];
+  double r = sqrt(delx * delx + delz * delz); // TODO: projection
+  double dr = r - r_zero[itype][jtype];
 
   double du = 0;
   double du2 = 2 * k[itype][jtype];
