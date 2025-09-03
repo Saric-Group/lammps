@@ -143,7 +143,7 @@ double PairNematicSoft::init_one(int i, int j)
 
   Aamp[j][i] = Aamp[i][j];
   kappa[j][i] = kappa[i][j];
-  theta0[j][i] = theta0[i][j]; 
+  theta0[j][i] = theta0[i][j];
   alpha[j][i] = alpha[i][j];
   epsilon[j][i] = epsilon[i][j];
   c0[j][i] = c0[i][j];
@@ -158,15 +158,17 @@ double PairNematicSoft::init_one(int i, int j)
 }
 
 // geometric correction to account for increased overlap at small angles
-double geometric_correction(double sin_theta, double alpha, double cutoff) {
-    double saturation = alpha * cutoff;
-    return sqrt((sin_theta * sin_theta + saturation * saturation) / (1.0 + saturation * saturation));
+double geometric_correction(double sin_theta, double alpha, double cutoff)
+{
+  double saturation = alpha * cutoff;
+  return sqrt((sin_theta * sin_theta + saturation * saturation) / (1.0 + saturation * saturation));
 }
 
-
-double dcorr_dtheta(double sin_theta, double sincos_theta, double alpha, double cutoff) {
-    double saturation = alpha * cutoff;
-    return sincos_theta / sqrt((1.0 + saturation * saturation) * (sin_theta * sin_theta + saturation * saturation));
+double dcorr_dtheta(double sin_theta, double sincos_theta, double alpha, double cutoff)
+{
+  double saturation = alpha * cutoff;
+  return sincos_theta /
+      sqrt((1.0 + saturation * saturation) * (sin_theta * sin_theta + saturation * saturation));
 }
 
 void PairNematicSoft::compute(int eflag, int vflag)
@@ -230,22 +232,15 @@ void PairNematicSoft::compute(int eflag, int vflag)
       // z-component of cross (2D signed sine)
       double s = mu[i][0] * mu[j][1] - mu[i][1] * mu[j][0];
 
-      double c2 = c * c;
-      double s2 = s * s;
-      double sc = s * c;
+      double a = s * c0ij;
+      double b = c * s0ij;
+      double sm = a - b;
+      double sp = a + b;
 
-      // angular energy in stable form: Uang = 1 - 2*exp(Sth)*cosh(Rth)
-      double Sth = -2.0 * kij * (s2 * c0ij * c0ij + c2 * s0ij * s0ij);
-      double Rth = 4.0 * kij * (sc * c0s0ij);
+      double em = exp(-2.0 * kij * sm * sm);
+      double ep = exp(-2.0 * kij * sp * sp);
 
-      double eS = exp(Sth);
-      double coshR = cosh(Rth);
-      double sinhR = sinh(Rth);
- 
-      // angular part of potential with geometric correction to account for increased overlap at small angles
-      double Uang_base = 1.0 - 2.0 * epsilonij * eS * coshR * c_fac_ij;
-      double Uang = Uang_base * geometric_correction(s, alphaij, rc);
-      // double Uang = 1.0;
+      double Uang = (1.0 - em) * (1.0 - ep);
 
       // soft radial factor and derivative
       // S(r) = A [1 + cos(pi r / rc)] for r < rc
@@ -260,10 +255,11 @@ void PairNematicSoft::compute(int eflag, int vflag)
       double fz = f_over_r * delz;
 
       // torque from angular derivative: dU/dθ
-      double dUang_dtheta1 = 8.0 * kij * epsilonij * eS * (sc * cos2t0ij * coshR - c0s0ij * (c2 - s2) * sinhR) * c_fac_ij * geometric_correction(s, alphaij, rc);
-      double dUang_dtheta2 = Uang_base * dcorr_dtheta(s, sc, alphaij, rc);
-      double dUang_dtheta = dUang_dtheta1 + dUang_dtheta2;
-      // double dUang_dtheta = 0.0;
+      double cm = c * c0ij + s * s0ij;
+      double cp = c * c0ij - s * s0ij;
+      double dfm = 4.0 * kij * em * sm * cm;
+      double dfp = 4.0 * kij * ep * sp * cp;
+      double dUang_dtheta = dfm * (1.0 - ep) + (1.0 - em) * dfp;
 
       double tau_i_z = Sr * dUang_dtheta;
       double tau_j_z = -Sr * dUang_dtheta;
@@ -281,7 +277,7 @@ void PairNematicSoft::compute(int eflag, int vflag)
       }
 
       double evdwl = 0.0;
-    if (eflag) evdwl = Sr * Uang;
+      if (eflag) evdwl = Sr * Uang;
       if (evflag) ev_tally_xyz(i, j, nlocal, newton_pair, evdwl, 0.0, fx, fy, fz, delx, dely, delz);
     }
   }
@@ -310,7 +306,8 @@ double PairNematicSoft::single(int i, int j, int itype, int jtype, double rsq, d
   double r = sqrt(rsq);
   double xarg = M_PI * r / rc;
   double Sr = Aij * (1.0 + cos(xarg));
-  double dSdr = -Aij * (M_PI / rc) * sin(xarg) / r;    // this is divided by r also in og pair_soft implementation
+  double dSdr = -Aij * (M_PI / rc) * sin(xarg) /
+      r;    // this is divided by r also in og pair_soft implementation
 
   double energy = Sr;
   fforce = -dSdr * factor_lj;    // -dU/dr
@@ -321,9 +318,7 @@ double PairNematicSoft::single_orientation(int itype, int jtype, double rsq, dou
                                            const double *mu_i, const double *mu_j)
 {
   double rc = cut[itype][jtype] > 0.0 ? cut[itype][jtype] : cut_global;
-  if (rc <= 0.0 || rsq >= rc*rc || factor_lj == 0.0) {
-    return 0.0;
-  }
+  if (rc <= 0.0 || rsq >= rc * rc || factor_lj == 0.0) { return 0.0; }
 
   double Aij = Aamp[itype][jtype];
   double kij = kappa[itype][jtype];
@@ -336,18 +331,19 @@ double PairNematicSoft::single_orientation(int itype, int jtype, double rsq, dou
 
   double c = mu_i[0] * mu_j[0] + mu_i[1] * mu_j[1];
   double s = mu_i[0] * mu_j[1] - mu_i[1] * mu_j[0];
-  double c2 = c*c, s2 = s*s, sc = s*c;
+  double sp = s * c0ij + c * s0ij;
+  double sm = s * c0ij - c * s0ij;
 
-  // double Sth = -2.0 * kij * (s2 * c0ij * c0ij + c2 * s0ij * s0ij);
-  // double Rth = 4.0 * kij * (sc * c0s0ij);
-  // double Uang = 1.0 - 2.0 * exp(Sth) * cosh(Rth) * c_fac_ij;
-  double Uang = 1.0 - epsilonij * (-2.0 * kij * (s * c0ij + c * s0ij) * (s * c0ij + c * s0ij)) * c_fac_ij;
-  Uang *= geometric_correction(s, alphaij, rc);
+  double ep = exp(-2.0 * kij * sp * sp);
+  double em = exp(-2.0 * kij * sm * sm);
+
+  double Uang = (1.0 - ep); // * (1.0 - em);
 
   double r = sqrt(rsq);
   double xarg = M_PI * r / rc;
   double Sr = Aij * (1.0 + cos(xarg));
-  
+
   double energy = Sr * Uang;
+  // double energy = 0.0;
   return energy * factor_lj;
 }
