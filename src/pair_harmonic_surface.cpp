@@ -27,8 +27,6 @@
 
 #include <cmath>
 #include <cstring>
-#include <iostream>
-#include "update.h"
 
 using namespace LAMMPS_NS;
 using namespace MathConst;
@@ -107,7 +105,7 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
         normr = sqrt(normx * normx + normz * normz);
         normx /= normr;
         normz /= normr;
-      } else if (itype ==5) {
+      } else if (itype == 5) {
         normx = x[i][0];
         normz = x[i][2];
         normr = sqrt(normx * normx + normz * normz);
@@ -118,7 +116,7 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       }
 
       if (rsq < cutsq[itype][jtype]) {
-        const double r = abs(delx * normx + delz * normz); // TODO: normal projection
+        const double r = std::abs(delx * normx + delz * normz); // TODO: normal projection
         const double delta = r_zero[itype][jtype] - r;
         const double prefactor = factor_lj * delta * k[itype][jtype];
         const double fpair = 2.0 * prefactor;
@@ -213,14 +211,7 @@ void PairHarmonicSurface::coeff(int narg, char **arg)
       count++;
     }
   }
-  for (int i = 0; i < atom->ntypes; i++){
-    for (int j = 0; j < atom->ntypes; j++){
-      if (setflag[i][j]) {
-        std::cout << "r_zero[" << i << "][" << j << "] = " << r_zero[i][j];
-      }
-    }
-    std::cout << std::endl;
-  }
+
   if (count == 0) error->all(FLERR, "Incorrect args for pair coefficients");
 }
 
