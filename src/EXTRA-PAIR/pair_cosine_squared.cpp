@@ -31,6 +31,14 @@
 using namespace LAMMPS_NS;
 using namespace MathConst;
 
+/* MMB -- LITTLE GUYS ADDITION */
+void *PairCosineSquared::extract(const char *str, int &dim){
+    dim = 2;
+    if (strcmp(str, "eps") == 0) return (void *) epsilon;
+    if (strcmp(str, "sigma") == 0) return (void *) sigma;
+    return nullptr;
+}
+
 /* ---------------------------------------------------------------------- */
 
 PairCosineSquared::PairCosineSquared(LAMMPS *lmp) : Pair(lmp)

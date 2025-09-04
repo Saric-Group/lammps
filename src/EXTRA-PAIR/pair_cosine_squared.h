@@ -45,7 +45,8 @@ class PairCosineSquared : public Pair {
   void compute(int, int) override;
   double single(int, int, int, int, double, double, double, double &) override;
   // void *extract(const char *, int &);
-
+  /* MMB LITTLE GUYS ADDITION */
+  void *extract(const char *, int &) override;
   /* RESPA stuff not implemented...
   void compute_inner();
   void compute_middle();
