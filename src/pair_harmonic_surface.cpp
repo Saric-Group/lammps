@@ -62,6 +62,8 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
   double normx, normy, normz, normr;
   int *ilist, *jlist, *numneigh, **firstneigh;
 
+  double costheta_max;
+
   ev_init(eflag, vflag);
 
   double **x = atom->x;
@@ -99,46 +101,57 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       rsq = delx * delx + dely * dely + delz * delz;
       jtype = type[j];
 
+      // determine normal vector at surface atom
       if (jtype == 5) {
-        normx = x[j][0]; 
-        normz = x[j][2];
-        normr = sqrt(normx * normx + normz * normz);
-        normx /= normr;
-        normz /= normr;
+        // simply set normal vectors as pointing radially inward for now.
+        normx = - x[j][0];
+        normy = 0;
+        normz = - x[j][2];
       } else if (itype == 5) {
-        normx = x[i][0];
-        normz = x[i][2];
-        normr = sqrt(normx * normx + normz * normz);
-        normx /= normr;
-        normz /= normr;
+        normx = - x[i][0];
+        normy = 0;
+        normz = - x[i][2];
       } else {
         error->all(FLERR, "Wrong surface type.");
       }
+      normr = sqrt(normx * normx + normy * normy + normz * normz);
+      normx /= normr;
+      normy /= normr;
+      normz /= normr;
 
       if (rsq < cutsq[itype][jtype]) {
-        const double r = std::abs(delx * normx + delz * normz); // TODO: normal projection
-        const double delta = r_zero[itype][jtype] - r;
-        const double prefactor = factor_lj * delta * k[itype][jtype];
-        const double fpair = 2.0 * prefactor;
-
-        if (jtype == 5) {
-          fxtmp -= normx * fpair;
-          // fytmp += normy * fpair;
-          fztmp -= normz * fpair;
-          if (newton_pair || j < nlocal) {
-            f[j][0] += normx * fpair;
-            // f[j][1] -= dely * fpair; // TODO: normal projection
-            f[j][2] += normz * fpair;
-          }
-        } else if (itype == 5) {
-          fxtmp += normx * fpair;
-          // fytmp += normy * fpair;
-          fztmp += normz * fpair;
-          if (newton_pair || j < nlocal) {
-            f[j][0] -= normx * fpair;
-            // f[j][1] -= dely * fpair; // TODO: normal projection
-            f[j][2] -= normz * fpair;
-          }
+        const double r = sqrt(rsq);
+        costheta_max = r_zero[itype][jtype] / cut[itype][jtype];
+        const double align = std::abs(delx * normx + dely * normy + delz * normz) / r; // [0, 1] alignment of delta with surface normal. TODO: properly calculate normals
+        double theta_fact = (align - costheta_max) / (1.0 - costheta_max); // linear decay of force magnitude when going away from ideal alignment
+        theta_fact = theta_fact > 0 ? theta_fact : 0;
+        double delta = r_zero[itype][jtype] - r;
+        const double prefactor = factor_lj * delta * k[itype][jtype] * theta_fact;
+        const double fpair = 2.0 * prefactor / r;
+        
+        if (itype == 5) {
+            // fpair is negative when larger than r_zero
+            // therefore change sign here to move surface atoms inwards
+            // therefore along normal, this should point inwards
+            fxtmp -= align * fpair * normx;
+            fytmp -= align * fpair * normy;
+            fztmp -= align * fpair * normz;
+            if (newton_pair || j < nlocal) {
+                f[j][0] -= delx * fpair;
+                f[j][1] -= dely * fpair;
+                f[j][2] -= delz * fpair;
+            }
+        } else if (jtype == 5) {
+            fxtmp += delx * fpair;
+            fytmp += dely * fpair;
+            fztmp += delz * fpair;
+            if (newton_pair || j < nlocal) {
+                fxtmp -= align * fpair * normx;
+                fytmp -= align * fpair * normy;
+                fztmp -= align * fpair * normz;
+            }
+        } else {
+            error->all(FLERR, "Wrong surface type.");
         }
 
         if (evflag) {
@@ -148,7 +161,7 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       }
     }
     f[i][0] += fxtmp;
-    // f[i][1] += fytmp; // TODO: normal projection
+    f[i][1] += fytmp;
     f[i][2] += fztmp;
   }
 
