@@ -20,8 +20,8 @@ PairStyle(cosine/squared/surface, PairCosineSquaredSurface);
 // clang-format on
 #else
 
-#ifndef LMP_PAIR_LJ_COS_SQ_H
-#define LMP_PAIR_LJ_COS_SQ_H
+#ifndef LMP_PAIR_LJ_COS_SQ_SURF_H
+#define LMP_PAIR_LJ_COS_SQ_SURF_H
 
 #include "pair.h"
 
