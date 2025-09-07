@@ -146,9 +146,9 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
             fytmp += dely * fpair;
             fztmp += delz * fpair;
             if (newton_pair || j < nlocal) {
-                fxtmp -= align * fpair * normx;
-                fytmp -= align * fpair * normy;
-                fztmp -= align * fpair * normz;
+                f[j][0] -= align * fpair * normx;
+                f[j][1] -= align * fpair * normy;
+                f[j][2] -= align * fpair * normz;
             }
         } else {
             error->all(FLERR, "Wrong surface type.");
