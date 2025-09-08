@@ -170,6 +170,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   xspecial = nullptr;
   onemol_xspecial = nullptr;
   twomol_xspecial = nullptr;
+  hydrolysis_random = nullptr; // @FelixWodaczek/lifetime
 
   // these group names are reserved for use exclusively by bond/react
   master_group = (char *) "bond_react_MASTER_group";
