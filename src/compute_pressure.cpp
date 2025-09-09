@@ -48,6 +48,7 @@ ComputePressure::ComputePressure(LAMMPS *lmp, int narg, char **arg) :
   extvector = 0;
   pressflag = 1;
   timeflag = 1;
+  novolumeflag = 0; // Added by Adam Prada
 
   // store temperature ID used by pressure computation
   // ensure it is valid for temperature computation
@@ -71,6 +72,15 @@ ComputePressure::ComputePressure(LAMMPS *lmp, int narg, char **arg) :
     pairflag = 1;
     bondflag = angleflag = dihedralflag = improperflag = 1;
     kspaceflag = fixflag = 1;
+    // Added by Adam Prada ****************************************************
+    novolumeflag = 0;
+  } else if (narg == 5 && strcmp(arg[4],"novolume") == 0) {
+    keflag = 1;
+    pairflag = 1;
+    bondflag = angleflag = dihedralflag = improperflag = 1;
+    kspaceflag = fixflag = 1;
+    // Added by Adam Prada ****************************************************
+    novolumeflag = 1;
   } else {
     keflag = 0;
     pairflag = 0;
@@ -79,6 +89,9 @@ ComputePressure::ComputePressure(LAMMPS *lmp, int narg, char **arg) :
     int iarg = 4;
     while (iarg < narg) {
       if (strcmp(arg[iarg],"ke") == 0) keflag = 1;
+      // Added by Adam Prada ****************************************************
+      else if (strcmp(arg[iarg],"novolume") == 0) novolumeflag = 1;
+      // ************************************************************************
       else if (strcmp(arg[iarg],"pair/hybrid") == 0) {
         if (lmp->suffix)
           pstyle = utils::strdup(fmt::format("{}/{}",arg[++iarg],lmp->suffix));
@@ -129,7 +142,7 @@ ComputePressure::ComputePressure(LAMMPS *lmp, int narg, char **arg) :
   // error check
 
   if (keflag && id_temp == nullptr)
-    error->all(FLERR, Error::NOLASTLINE,
+error->all(FLERR, Error::NOLASTLINE,
                "Compute pressure requires temperature ID to include kinetic energy");
 
   vector = new double[size_vector];
@@ -250,7 +263,11 @@ double ComputePressure::compute_scalar()
   }
 
   if (dimension == 3) {
-    inv_volume = 1.0 / (domain->xprd * domain->yprd * domain->zprd);
+    // Added by Adam Prada ******************************************************
+    if (novolumeflag) inv_volume = 1.0;
+    else inv_volume = 1.0 / (domain->xprd * domain->yprd * domain->zprd);
+    // **************************************************************************
+    //inv_volume = 1.0;
     virial_compute(3,3);
     if (keflag)
       scalar = (temperature->dof * boltz * temperature->scalar +
@@ -258,7 +275,11 @@ double ComputePressure::compute_scalar()
     else
       scalar = (virial[0] + virial[1] + virial[2]) / 3.0 * inv_volume * nktv2p;
   } else {
-    inv_volume = 1.0 / (domain->xprd * domain->yprd);
+    // Added by Adam Prada ******************************************************
+    if (novolumeflag) inv_volume = 1.0;
+    else inv_volume = 1.0 / (domain->xprd * domain->yprd);
+    // **************************************************************************
+    //inv_volume = 1.0;
     virial_compute(2,2);
     if (keflag)
       scalar = (temperature->dof * boltz * temperature->scalar +
@@ -296,7 +317,11 @@ void ComputePressure::compute_vector()
   }
 
   if (dimension == 3) {
-    inv_volume = 1.0 / (domain->xprd * domain->yprd * domain->zprd);
+    // Added by Adam Prada ******************************************************
+    if (novolumeflag) inv_volume = 1.0;
+    else inv_volume = 1.0 / (domain->xprd * domain->yprd * domain->zprd);
+    // **************************************************************************
+    //inv_volume = 1.0;
     virial_compute(6,3);
     if (keflag) {
       for (int i = 0; i < 6; i++)
@@ -305,7 +330,11 @@ void ComputePressure::compute_vector()
       for (int i = 0; i < 6; i++)
         vector[i] = virial[i] * inv_volume * nktv2p;
   } else {
-    inv_volume = 1.0 / (domain->xprd * domain->yprd);
+    // Added by Adam Prada ******************************************************
+    if (novolumeflag) inv_volume = 1.0;
+    else inv_volume = 1.0 / (domain->xprd * domain->yprd);
+    // **************************************************************************
+    //inv_volume = 1.0;
     virial_compute(4,2);
     if (keflag) {
       vector[0] = (ke_tensor[0] + virial[0]) * inv_volume * nktv2p;
