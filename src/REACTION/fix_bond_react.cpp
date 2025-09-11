@@ -4258,7 +4258,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             delx = coords[m][0] - coords[m2][0];
             dely = coords[m][1] - coords[m2][1];
             delz = coords[m][2] - coords[m2][2];
-            domain->minimum_image(delx,dely,delz);
+            domain->minimum_image(FLERR, delx,dely,delz);
             rsq = delx*delx + dely*dely + delz*delz;
             if (rsq < overlapsq[rxnID]) {
               overlap_failed = true;
@@ -4286,7 +4286,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             delx = coords[m][0] - x[i][0];
             dely = coords[m][1] - x[i][1];
             delz = coords[m][2] - x[i][2];
-            domain->minimum_image(delx,dely,delz);
+            domain->minimum_image(FLERR, delx,dely,delz);
             rsq = delx*delx + dely*dely + delz*delz;
             int existing_type = atom->type[i];
             if (rsq < force->pair->cutsq[new_type][existing_type]) {
@@ -4309,7 +4309,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
               delx = coords[m][0] - coords[m2][0];
               dely = coords[m][1] - coords[m2][1];
               delz = coords[m][2] - coords[m2][2];
-              domain->minimum_image(delx,dely,delz);
+              domain->minimum_image(FLERR, delx,dely,delz);
               rsq = delx*delx + dely*dely + delz*delz;
               int type1 = twomol->type[m];
               int type2 = twomol->type[m2];
