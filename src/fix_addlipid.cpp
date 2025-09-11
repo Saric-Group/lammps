@@ -530,8 +530,7 @@ void FixAddLipid::init_list(int id, NeighList *ptr)
    perform lipid insertion
 ------------------------------------------------------------------------- */
 
-void FixAddLipid::pre_exchange()
-{
+void FixAddLipid::pre_exchange() {
   int i,m,ii,inum,itype,j,jj,jnum,jtype,k,kk,knum,ktype,flag,count,near_count_i,near_count_j,near_count_mid, mask_tmp, type_properties_flag,ni,commflag;
   double xi[3],xj[3],xk[3],rij[3],r,xmid[3],xmidk[3],xik[3],xjk[3],rik,rjk,rmidk,rmidk_ji,rmidk_v,nquatmid[4],nmidl[3],rmp_nor[3],vector_tmp[3],nip[3],njp[3],o[3],rijo[3],Bezier_mid[3],xBmk[3],rBmk;
   double a1[3][3],a2[3][3],a3[3][3],ni1[3],nj1[3],nk1[3],nmid1[3],r12hat[3],r13hat[3],r23hat[3],r43hat[3],ninj,nink,njnk,ni1rhat,nj1rhat,a_fluid_mem,nil_dot_mp,njl_dot_mp,tani_ij,tanj_ij,xip[3],xjq[3],p[3],q[3];
@@ -543,9 +542,7 @@ void FixAddLipid::pre_exchange()
   double *newcoord;
   double *nquati,*nquatj,*nquatk;
 
-
   //fprintf(stderr, "Checkhigh 1 ");
-
 
   int last_neighbour,in,num_dum;
   num_dum=num_nn;
@@ -557,23 +554,13 @@ void FixAddLipid::pre_exchange()
   int nearest_neighbours_ignore[num_dum];
   double nearest_neighbours_distance_ignore[num_dum];
 
-
-
-
   //if (need_neighbours_flag==0) num_nn=0;
-
-
-
-
-
   //std::array<int,2> limit_neigh;
   //std::vector<std::array<int,2>> limit_neigh_list;
 
   // just return if should not be called on this timestep
   // fprintf(stderr, "In fix addlipid at proc %d when time = %d: add_flag = %d\n", comm->me, update->ntimestep, add_flag);
   count_global = 0;
-
-
 
   if ((update->ntimestep % nevery) || !add_flag) {
     if (stabilization_flag==1 ||  ignore_neigh_flag==2 ) unlimit_bond();
@@ -608,12 +595,10 @@ void FixAddLipid::pre_exchange()
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
 
-  
   memory->create(xnew,atom->nmax,10,"fix_addlipid:xnew");
   memory->create(masknew,atom->nmax,"fix_addlipid:masknew");
 
   count = 0;
-
 
   int flag_st, cols;
   int *i_limit_tags;
@@ -636,58 +621,38 @@ void FixAddLipid::pre_exchange()
     i_ignored_tags = atom->ivector[index4];
   }
 
-
-
- // fprintf(stderr, "Checkhigh");
-  //if (atom->nmax > nmax) {
-   // memory->destroy(statted_vec);
-   // memory->destroy(statted_vec);
-   // nmax = atom->nmax;
-   // memory->create(statted_vec,nmax,"addlipid:statted_vec");
-   // memory->create(limit_vec,nmax,"addlipid:limit_vec");
-
-  //}
-
-
-
-
-
-
-  /**/
-  // fprintf(stderr, "In fix addlipid at proc %d when time = %d: all 01\n", comm->me, update->ntimestep);
   type_properties_flag=true;
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
 
-
-
+    // ignore a fraction of possible insert positions
     if (random_ignorance_flag==1) {
       if (random_test[0]->uniform()>=p_add) continue;
     }
 
+    // Exclude/include particles based on group membership
+    // one automatically in other for automatically exclude
     if (group_consideration_flag==1){
       if (!(mask[i] & consider_group)) continue;
       }
     else if (group_consideration_flag==2) {
       if ((mask[i] & consider_group)) continue;
-      }
-
+    }
 
     // Exclude statted particles from adding procedure
     if (stabilization_flag) {
-    if (ignore_neigh_flag == 2) {
-      if (i_ignored_tags[i] == 1) continue;
-    } else if (ignore_neigh_flag == 1) {
-      if (i_statted_tags[i] == 0) continue;
+      if (ignore_neigh_flag == 2) {
+        if (i_ignored_tags[i] == 1) continue;
+      } else if (ignore_neigh_flag == 1) {
+        if (i_statted_tags[i] == 0) continue;
+      }
     }
-    }
-
-
 
    // fprintf(stderr, "Checking");
     if (!(mask[i] & groupbit)) continue;
     itype = type[i];
-	if (itype == lipid_type) mask_tmp = mask[i];
+
+    if (itype == lipid_type) mask_tmp = mask[i];
     xi[0] = x[i][0];
     xi[1] = x[i][1];
     xi[2] = x[i][2];
@@ -696,19 +661,16 @@ void FixAddLipid::pre_exchange()
 
     // extract properties for inserted atom from first encounterd atom of type lipid_type
     if (type_properties_flag) {
-    shape_dummy = avec_ellipsoid->bonus[atom->ellipsoid[i]].shape;
-    mass_dummy = atom->rmass[i];
-    type_properties_flag=false;
+      shape_dummy = avec_ellipsoid->bonus[atom->ellipsoid[i]].shape;
+      mass_dummy = atom->rmass[i];
+      type_properties_flag=false;
     }
 	
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
       j &= NEIGHMASK;
 
-
-
       if (!(mask[j] & groupbit) || j == i) continue;
-
 
       if (group_consideration_flag==1){
       if (!(mask[j] & consider_group)) continue;
@@ -717,45 +679,40 @@ void FixAddLipid::pre_exchange()
       if ((mask[j] & consider_group)) continue;
       }
 
-
+      // TODO: @FelixWodaczek change insertion type to something settable as kwarg
       jtype = type[j];
 
-
-
       // Exclude statted particles from adding procedure
       // Exclude statted particles from adding procedure
-      if (ignore_neigh_flag==2)  {if (i_ignored_tags[j]==1) continue;}
-      else if (ignore_neigh_flag==1)  {if (i_statted_tags[j]==0) continue;}
+      if (ignore_neigh_flag==2) {if (i_ignored_tags[j]==1) continue;}
+      else if (ignore_neigh_flag==1) {if (i_statted_tags[j]==0) continue;}
 
-
-
-
-	  // if (itype != lipid_type && jtype != lipid_type) continue;
+	    // if (itype != lipid_type && jtype != lipid_type) continue;
       xj[0] = x[j][0];
       xj[1] = x[j][1];
       xj[2] = x[j][2];
-	  rij[0] = xj[0] - xi[0];
-	  rij[1] = xj[1] - xi[1];
-	  rij[2] = xj[2] - xi[2];
-	  r = sqrt(rij[0] * rij[0] + rij[1] * rij[1] + rij[2] * rij[2]);
+      rij[0] = xj[0] - xi[0];
+      rij[1] = xj[1] - xi[1];
+      rij[2] = xj[2] - xi[2];
+      r = sqrt(rij[0] * rij[0] + rij[1] * rij[1] + rij[2] * rij[2]);
 
 
-    // MW: Initialize neirest neighbours array with (at least one of the) parents i,j
-    if (need_neighbours_flag){
-      for (in=0;in<num_nn;in++){
-        nearest_neighbours[in]=-1;
-        nearest_neighbours_distance[in]=1000.0;
-      }
-      //if (num_nn==1) {
-      //  nearest_neighbours[0]=i;
-      //  nearest_neighbours_distance[0]=r*r/2.0;
-      //}
-      //else {
-      //  nearest_neighbours[0]=i;
-      //  nearest_neighbours_distance[0]=r*r/2;
-      //  nearest_neighbours[1]=j;
-      //  nearest_neighbours_distance[1]=r*r/2;
-      }
+      // MW: Initialize neirest neighbours array with (at least one of the) parents i,j
+      if (need_neighbours_flag){
+        for (in=0;in<num_nn;in++){
+          nearest_neighbours[in]=-1;
+          nearest_neighbours_distance[in]=1000.0;
+        }
+        //if (num_nn==1) {
+        //  nearest_neighbours[0]=i;
+        //  nearest_neighbours_distance[0]=r*r/2.0;
+        //}
+        //else {
+        //  nearest_neighbours[0]=i;
+        //  nearest_neighbours_distance[0]=r*r/2;
+        //  nearest_neighbours[1]=j;
+        //  nearest_neighbours_distance[1]=r*r/2;
+        }
 
       if (need_neighbours_flag==2) {
 
@@ -763,332 +720,302 @@ void FixAddLipid::pre_exchange()
           nearest_neighbours_ignore[in] = -1;
           nearest_neighbours_distance_ignore[in] = 1000.0;
         }
-       // if (num_nn_ignore == 1) {
-       //   nearest_neighbours_ignore[0] = i;
-       //   nearest_neighbours_distance_ignore[0] = r * r / 2.0;
-       // } else {
-        //  nearest_neighbours_ignore[0] = i;
-        //  nearest_neighbours_distance_ignore[0] = r * r / 2;
-        //  nearest_neighbours_ignore[1] = j;
-        //  nearest_neighbours_distance_ignore[1] = r * r / 2;
-       // }
       }
-
-
-    //}
-
-	  // if ((tag[i] == 6746 && tag[j] == 6748) || (tag[i] == 6748 && tag[j] == 6746)) fprintf(stderr, "In fix addlipid at proc %d when time = %d: tag[i] = %d, tag[j] = %d, r = %f\n", comm->me, update->ntimestep, tag[i], tag[j], r);
-	  if (r < d_cut || r > d_break) continue;
-	  
-	  nquati = avec_ellipsoid->bonus[ellipsoid[i]].quat;
-	  nquatj = avec_ellipsoid->bonus[ellipsoid[j]].quat;
-	  MathExtra::quat_to_mat_trans(nquati,a1);
-	  MathExtra::quat_to_mat_trans(nquatj,a2);
+  
+      // TODO: @FelixWodaczek remove distance check, not necessary
+      if (r < d_cut || r > d_break) continue;
+    
+      // check alignment
+      nquati = avec_ellipsoid->bonus[ellipsoid[i]].quat;
+      nquatj = avec_ellipsoid->bonus[ellipsoid[j]].quat;
+      MathExtra::quat_to_mat_trans(nquati,a1);
+      MathExtra::quat_to_mat_trans(nquatj,a2);
       MathExtra::normalize3(rij,r12hat);
-	  ni1[0]=a1[0][0];
+      ni1[0]=a1[0][0];
       ni1[1]=a1[0][1];
       ni1[2]=a1[0][2];
       nj1[0]=a2[0][0];
       nj1[1]=a2[0][1];
       nj1[2]=a2[0][2];
-	  ninj = MathExtra::dot3(ni1,nj1);
+      ninj = MathExtra::dot3(ni1,nj1);
       ni1rhat = MathExtra::dot3(ni1,r12hat);
       nj1rhat = MathExtra::dot3(nj1,r12hat);
-      // a_fluid_mem = ninj + (sint-ni1rhat)*(sint+nj1rhat) - 2.0*sint*sint;
-	  a_fluid_mem = ninj - ni1rhat * nj1rhat;
-	  // if (update->ntimestep % 1000 == 0) fprintf(stderr, "In fix addlipid at proc %d when time = %d: a_fluid_mem = %f, ninj = %f, ni1rhat = %f, nj1rhat = %f\n", comm->me, update->ntimestep, a_fluid_mem, ninj, ni1rhat, nj1rhat);
-	  // if ((tag[i] == 6746 && tag[j] == 6748) || (tag[i] == 6748 && tag[j] == 6746)) fprintf(stderr, "In fix addlipid at proc %d when time = %d: tag[i] = %d, tag[j] = %d, a_fluid_mem = %f\n", comm->me, update->ntimestep, tag[i], tag[j], a_fluid_mem);
-	  if (a_fluid_mem < a_min) continue;
+        // a_fluid_mem = ninj + (sint-ni1rhat)*(sint+nj1rhat) - 2.0*sint*sint;
+      a_fluid_mem = ninj - ni1rhat * nj1rhat;
+      // if (update->ntimestep % 1000 == 0) fprintf(stderr, "In fix addlipid at proc %d when time = %d: a_fluid_mem = %f, ninj = %f, ni1rhat = %f, nj1rhat = %f\n", comm->me, update->ntimestep, a_fluid_mem, ninj, ni1rhat, nj1rhat);
+      // if ((tag[i] == 6746 && tag[j] == 6748) || (tag[i] == 6748 && tag[j] == 6746)) fprintf(stderr, "In fix addlipid at proc %d when time = %d: tag[i] = %d, tag[j] = %d, a_fluid_mem = %f\n", comm->me, update->ntimestep, tag[i], tag[j], a_fluid_mem);
+      // TODO: @FelixWodaczek alignment check not necessary prob.
+      if (a_fluid_mem < a_min) continue;
 		
-	  // see if there are beads near the mid point of the Bezier curve between i and j
-	  vector_tmp[0] = (ni1[0] + nj1[0]) / 2;    // get the mid vector of the direction of i and j
-	  vector_tmp[1] = (ni1[1] + nj1[1]) / 2;
-	  vector_tmp[2] = (ni1[2] + nj1[2]) / 2;
-	  MathExtra::normalize3(vector_tmp,nmidl);
-	  MathExtra::cross3(nmidl,r12hat,vector_tmp);    // get the normal direction rmp_nor of the mid plane between i and j
-	  MathExtra::normalize3(vector_tmp,rmp_nor);
-	  nil_dot_mp = MathExtra::dot3(ni1,rmp_nor);    // get nip and njp, the projection of ni1 and nj1 in the mid plane
-	  njl_dot_mp = MathExtra::dot3(nj1,rmp_nor);
-	  nip[0] = ni1[0] - nil_dot_mp * rmp_nor[0];
-	  nip[1] = ni1[1] - nil_dot_mp * rmp_nor[1];
-	  nip[2] = ni1[2] - nil_dot_mp * rmp_nor[2];
-	  njp[0] = nj1[0] - njl_dot_mp * rmp_nor[0];
-	  njp[1] = nj1[1] - njl_dot_mp * rmp_nor[1];
-	  njp[2] = nj1[2] - njl_dot_mp * rmp_nor[2];
-	  // tani_ij = tan(arccos(ni1rhat));    // the tan of the angle between the the ij vector and the direction of i or j
-	  // tanj_ij = tan(arccos(nj1rhat));
-	  // MathExtra::cross3(rmp_nor,r12hat,rijo);    // get the vector vertical to both rij and rmp
-	  // o[0] = xi[0] + r * (tani_ij * r12hat[0] + rijo[0]) / (tani_ij - tanj_ij);    // get the position of o, the point of intersection of the vertical vector of the direction of i and j
-	  // o[1] = xi[1] + r * (tani_ij * r12hat[1] + rijo[1]) / (tani_ij - tanj_ij);
-	  // o[2] = xi[2] + r * (tani_ij * r12hat[2] + rijo[2]) / (tani_ij - tanj_ij);
-	  // Bezier_mid[0] = xi[0] / 4 + xj[0] / 4 + o[0] / 2;    // get the position of the mid point of Bezier curve
-	  // Bezier_mid[1] = xi[1] / 4 + xj[1] / 4 + o[1] / 2;
-	  // Bezier_mid[2] = xi[2] / 4 + xj[2] / 4 + o[2] / 2;
-	  MathExtra::cross3(rmp_nor,ni1,xip);    // get the vector from i to reference point p for Bezier curve
-	  MathExtra::cross3(nj1,rmp_nor,xjq);    // get the vector from j to reference point q for Bezier curve
-	  p[0] = xi[0] + r * xip[0] / 2;    // get the postion of reference point p for i
-	  p[1] = xi[1] + r * xip[1] / 2;
-	  p[2] = xi[2] + r * xip[2] / 2;
-	  q[0] = xj[0] + r * xjq[0] / 2;    // get the postion of reference point q for j
-	  q[1] = xj[1] + r * xjq[1] / 2;
-	  q[2] = xj[2] + r * xjq[2] / 2;
-	  Bezier_mid[0] = (xi[0] + p[0] * 3 + xj[0] + q[0] * 3) / 8;    // get the position of the mid point of Bezier curve
-	  Bezier_mid[1] = (xi[1] + p[1] * 3 + xj[1] + q[1] * 3) / 8;
-	  Bezier_mid[2] = (xi[2] + p[2] * 3 + xj[2] + q[2] * 3) / 8;
-	  
-	  xmid[0] = (xi[0] + xj[0]) / 2;
-	  xmid[1] = (xi[1] + xj[1]) / 2;
-	  xmid[2] = (xi[2] + xj[2]) / 2;
+      // @FelixWodaczek TODO: remove the j-loop and only check for k-neighbour overlap?
+      // see if there are beads near the mid point of the Bezier curve between i and j
+      vector_tmp[0] = (ni1[0] + nj1[0]) / 2;    // get the mid vector of the direction of i and j
+      vector_tmp[1] = (ni1[1] + nj1[1]) / 2;
+      vector_tmp[2] = (ni1[2] + nj1[2]) / 2;
+      MathExtra::normalize3(vector_tmp,nmidl);
+      MathExtra::cross3(nmidl,r12hat,vector_tmp);    // get the normal direction rmp_nor of the mid plane between i and j
+      MathExtra::normalize3(vector_tmp,rmp_nor);
+      nil_dot_mp = MathExtra::dot3(ni1,rmp_nor);    // get nip and njp, the projection of ni1 and nj1 in the mid plane
+      njl_dot_mp = MathExtra::dot3(nj1,rmp_nor);
+      nip[0] = ni1[0] - nil_dot_mp * rmp_nor[0];
+      nip[1] = ni1[1] - nil_dot_mp * rmp_nor[1];
+      nip[2] = ni1[2] - nil_dot_mp * rmp_nor[2];
+      njp[0] = nj1[0] - njl_dot_mp * rmp_nor[0];
+      njp[1] = nj1[1] - njl_dot_mp * rmp_nor[1];
+      njp[2] = nj1[2] - njl_dot_mp * rmp_nor[2];
+      // tani_ij = tan(arccos(ni1rhat));    // the tan of the angle between the the ij vector and the direction of i or j
+      // tanj_ij = tan(arccos(nj1rhat));
+      // MathExtra::cross3(rmp_nor,r12hat,rijo);    // get the vector vertical to both rij and rmp
+      // o[0] = xi[0] + r * (tani_ij * r12hat[0] + rijo[0]) / (tani_ij - tanj_ij);    // get the position of o, the point of intersection of the vertical vector of the direction of i and j
+      // o[1] = xi[1] + r * (tani_ij * r12hat[1] + rijo[1]) / (tani_ij - tanj_ij);
+      // o[2] = xi[2] + r * (tani_ij * r12hat[2] + rijo[2]) / (tani_ij - tanj_ij);
+      // Bezier_mid[0] = xi[0] / 4 + xj[0] / 4 + o[0] / 2;    // get the position of the mid point of Bezier curve
+      // Bezier_mid[1] = xi[1] / 4 + xj[1] / 4 + o[1] / 2;
+      // Bezier_mid[2] = xi[2] / 4 + xj[2] / 4 + o[2] / 2;
+      MathExtra::cross3(rmp_nor,ni1,xip);    // get the vector from i to reference point p for Bezier curve
+      MathExtra::cross3(nj1,rmp_nor,xjq);    // get the vector from j to reference point q for Bezier curve
+      p[0] = xi[0] + r * xip[0] / 2;    // get the postion of reference point p for i
+      p[1] = xi[1] + r * xip[1] / 2;
+      p[2] = xi[2] + r * xip[2] / 2;
+      q[0] = xj[0] + r * xjq[0] / 2;    // get the postion of reference point q for j
+      q[1] = xj[1] + r * xjq[1] / 2;
+      q[2] = xj[2] + r * xjq[2] / 2;
+      Bezier_mid[0] = (xi[0] + p[0] * 3 + xj[0] + q[0] * 3) / 8;    // get the position of the mid point of Bezier curve
+      Bezier_mid[1] = (xi[1] + p[1] * 3 + xj[1] + q[1] * 3) / 8;
+      Bezier_mid[2] = (xi[2] + p[2] * 3 + xj[2] + q[2] * 3) / 8;
+      
+      xmid[0] = (xi[0] + xj[0]) / 2;
+      xmid[1] = (xi[1] + xj[1]) / 2;
+      xmid[2] = (xi[2] + xj[2]) / 2;
 
-
-
-	  nquatmid[0] = (nquati[0] + nquatj[0]) / 2;
-	  nquatmid[1] = (nquati[1] + nquatj[1]) / 2;
-	  nquatmid[2] = (nquati[2] + nquatj[2]) / 2;
-	  nquatmid[3] = (nquati[3] + nquatj[3]) / 2;
-	  MathExtra::qnormalize(nquatmid);
-	  MathExtra::quat_to_mat_trans(nquatmid,a3);
-	  nmid1[0]=a3[0][0];
+      nquatmid[0] = (nquati[0] + nquatj[0]) / 2;
+      nquatmid[1] = (nquati[1] + nquatj[1]) / 2;
+      nquatmid[2] = (nquati[2] + nquatj[2]) / 2;
+      nquatmid[3] = (nquati[3] + nquatj[3]) / 2;
+      MathExtra::qnormalize(nquatmid);
+      MathExtra::quat_to_mat_trans(nquatmid,a3);
+      nmid1[0]=a3[0][0];
       nmid1[1]=a3[0][1];
       nmid1[2]=a3[0][2];
-	  // if (xmid[0] < sublo[0] || xmid[0] > subhi[0] || xmid[1] < sublo[1] || xmid[1] > subhi[1] || xmid[2] < sublo[2] || xmid[2] > subhi[2]) continue;
-	  
-/* 	  xabove[0] = xmid[0] - r * nmidl[0] / 2;    // get the points that are r/2 away from mid point along the mid vector direction
-	  xabove[1] = xmid[1] - r * nmidl[1] / 2;
-	  xabove[2] = xmid[2] - r * nmidl[2] / 2;
-	  xbelow[0] = xmid[0] + r * nmidl[0] / 2;
-	  xbelow[1] = xmid[1] + r * nmidl[1] / 2;
-	  xbelow[2] = xmid[2] + r * nmidl[2] / 2; */
-	  
-	  flag = 1;
-	  near_count_i = 0;
-	  near_count_j = 0;
-	  a_ik_sum = 0;
-	  a_jk_sum = 0;
-	  r_ik_sum = 0;
-	  r_jk_sum = 0;
-	  a_midk_sum = 0;
-	  r_midk_sum = 0;
-	  for (k = 0; k < nlocalghost; k++) {
-		if (k == j || k == i) continue;
-		ktype = type[k];
-		xk[0] = x[k][0];
+      
+      flag = 1;
+      near_count_i = 0;
+      near_count_j = 0;
+      a_ik_sum = 0;
+      a_jk_sum = 0;
+      r_ik_sum = 0;
+      r_jk_sum = 0;
+      a_midk_sum = 0;
+      r_midk_sum = 0;
+
+      for (k = 0; k < nlocalghost; k++) {
+        if (k == j || k == i) continue;
+        ktype = type[k];
+        xk[0] = x[k][0];
         xk[1] = x[k][1];
         xk[2] = x[k][2];
-		
-		// see if there are beads between i and j
-		xmidk[0] = xk[0] - xmid[0];    // vector from mid to k
-		xmidk[1] = xk[1] - xmid[1];
-		xmidk[2] = xk[2] - xmid[2];
-		rmidk = sqrt(xmidk[0] * xmidk[0] + xmidk[1] * xmidk[1] + xmidk[2] * xmidk[2]);
+        
+        // see if there are beads between i and j
+        xmidk[0] = xk[0] - xmid[0];    // vector from mid to k
+        xmidk[1] = xk[1] - xmid[1];
+        xmidk[2] = xk[2] - xmid[2];
+        rmidk = sqrt(xmidk[0] * xmidk[0] + xmidk[1] * xmidk[1] + xmidk[2] * xmidk[2]);
 
+        /*
 
-  /*
+          // MW: determine closest neighbour(s)
+          if (stabilization_flag && need_neighbours_flag) {
 
-    // MW: determine closest neighbour(s)
-    if (stabilization_flag && need_neighbours_flag) {
+                if (rmidk <= nearest_neighbours_distance[num_nn - 1]) {
 
-          if (rmidk <= nearest_neighbours_distance[num_nn - 1]) {
+                  // Find position to insert rmidk by scanning from the end for efficiency
+                  last_neighbour = num_nn - 1;
+                  while (last_neighbour > 0 && rmidk < nearest_neighbours_distance[last_neighbour - 1]) {
+                    nearest_neighbours_distance[last_neighbour] =
+                        nearest_neighbours_distance[last_neighbour - 1];
+                    nearest_neighbours[last_neighbour] = nearest_neighbours[last_neighbour - 1];
+                    last_neighbour--;
+                  }
 
-            // Find position to insert rmidk by scanning from the end for efficiency
-            last_neighbour = num_nn - 1;
-            while (last_neighbour > 0 && rmidk < nearest_neighbours_distance[last_neighbour - 1]) {
-              nearest_neighbours_distance[last_neighbour] =
-                  nearest_neighbours_distance[last_neighbour - 1];
-              nearest_neighbours[last_neighbour] = nearest_neighbours[last_neighbour - 1];
-              last_neighbour--;
-            }
+                  // Insert rmidk and k at the found position
+                  nearest_neighbours_distance[last_neighbour] = rmidk;
+                  nearest_neighbours[last_neighbour] = k;
+                }
 
-            // Insert rmidk and k at the found position
-            nearest_neighbours_distance[last_neighbour] = rmidk;
-            nearest_neighbours[last_neighbour] = k;
-          }
+              }
 
+          */
+
+        if (rmidk < OVERLAP) {    // see if k is too close to mid
+          flag = 0;
+          break;
         }
-
-    */
-
-
-
-
-		if (rmidk < OVERLAP) {    // see if k is too close to mid
-		  flag = 0;
-		  break;
-		}
+        
+        if (!(mask[k] & groupbit)) continue;
+        rmidk_ji = xmidk[0] * r12hat[0] + xmidk[1] * r12hat[1] + xmidk[2] * r12hat[2];    // the length between mid point and the projection of k at the ji vector
+        // if ((tag[i] == 6746 && tag[j] == 6748) || (tag[i] == 6748 && tag[j] == 6746)) fprintf(stderr, "In fix addlipid at proc %d when time = %d: tag[k] = %d, rmidk_ji = %f, r = %f, x[k][0] = %f, x[k][1] = %f, x[k][2] = %f\n", comm->me, update->ntimestep, tag[k], rmidk_ji, r, x[k][0], x[k][1], x[k][2]);
+        if (rmidk_ji * rmidk_ji > r * r / 4) continue;
+        rmidk_v = sqrt((xmidk[0] - rmidk_ji * r12hat[0]) * (xmidk[0] - rmidk_ji * r12hat[0]) + (xmidk[1] - rmidk_ji * r12hat[1]) * (xmidk[1] - rmidk_ji * r12hat[1]) + (xmidk[2] - rmidk_ji * r12hat[2]) * (xmidk[2] - rmidk_ji * r12hat[2]));    // distance between k and the projection of k at the ji vector
+        // if ((tag[i] == 6746 && tag[j] == 6748) || (tag[i] == 6748 && tag[j] == 6746)) fprintf(stderr, "In fix addlipid at proc %d when time = %d: tag[k] = %d, rmidk_ji = %f, rmidk_v = %f\n", comm->me, update->ntimestep, tag[k], rmidk_ji, rmidk_v);
+        if (rmidk_v < r_detect * sqrt(1 - 4 * rmidk_ji * rmidk_ji / r / r)) {    // see if k is in the ellipsoid between i and j, long axis is r/2, short axis is r_detect
+          flag = 0;
+          break;
+        }
 		
-		if (!(mask[k] & groupbit)) continue;
-		rmidk_ji = xmidk[0] * r12hat[0] + xmidk[1] * r12hat[1] + xmidk[2] * r12hat[2];    // the length between mid point and the projection of k at the ji vector
-		// if ((tag[i] == 6746 && tag[j] == 6748) || (tag[i] == 6748 && tag[j] == 6746)) fprintf(stderr, "In fix addlipid at proc %d when time = %d: tag[k] = %d, rmidk_ji = %f, r = %f, x[k][0] = %f, x[k][1] = %f, x[k][2] = %f\n", comm->me, update->ntimestep, tag[k], rmidk_ji, r, x[k][0], x[k][1], x[k][2]);
-		if (rmidk_ji * rmidk_ji > r * r / 4) continue;
-		rmidk_v = sqrt((xmidk[0] - rmidk_ji * r12hat[0]) * (xmidk[0] - rmidk_ji * r12hat[0]) + (xmidk[1] - rmidk_ji * r12hat[1]) * (xmidk[1] - rmidk_ji * r12hat[1]) + (xmidk[2] - rmidk_ji * r12hat[2]) * (xmidk[2] - rmidk_ji * r12hat[2]));    // distance between k and the projection of k at the ji vector
-		// if ((tag[i] == 6746 && tag[j] == 6748) || (tag[i] == 6748 && tag[j] == 6746)) fprintf(stderr, "In fix addlipid at proc %d when time = %d: tag[k] = %d, rmidk_ji = %f, rmidk_v = %f\n", comm->me, update->ntimestep, tag[k], rmidk_ji, rmidk_v);
-		if (rmidk_v < r_detect * sqrt(1 - 4 * rmidk_ji * rmidk_ji / r / r)) {    // see if k is in the ellipsoid between i and j, long axis is r/2, short axis is r_detect
-		  flag = 0;
-		  break;
-		}
+        // see if k is near the mid point of Bezier curve
+        xBmk[0] = xk[0] - Bezier_mid[0];    // vector from the mid point of Bezier curve to k
+        xBmk[1] = xk[1] - Bezier_mid[1];
+        xBmk[2] = xk[2] - Bezier_mid[2];
+        rBmk = sqrt(xBmk[0] * xBmk[0] + xBmk[1] * xBmk[1] + xBmk[2] * xBmk[2]);
+        if (rBmk < d_Bezier) {
+          flag = 0;
+          break;
+        }
 		
-		// see if k is near the mid point of Bezier curve
-		xBmk[0] = xk[0] - Bezier_mid[0];    // vector from the mid point of Bezier curve to k
-		xBmk[1] = xk[1] - Bezier_mid[1];
-		xBmk[2] = xk[2] - Bezier_mid[2];
-		rBmk = sqrt(xBmk[0] * xBmk[0] + xBmk[1] * xBmk[1] + xBmk[2] * xBmk[2]);
-		if (rBmk < d_Bezier) {
-		  flag = 0;
-		  break;
-		}
-		
-		// see if k is near the points that are above or below the mid point
-/* 		rabove = sqrt((xk[0] - xabove[0]) * (xk[0] - xabove[0]) + (xk[1] - xabove[1]) * (xk[1] - xabove[1]) + (xk[2] - xabove[2]) * (xk[2] - xabove[2]));
-		rbelow = sqrt((xk[0] - xbelow[0]) * (xk[0] - xbelow[0]) + (xk[1] - xbelow[1]) * (xk[1] - xbelow[1]) + (xk[2] - xbelow[2]) * (xk[2] - xbelow[2]));
-		if (rabove < d_Bezier || rbelow < d_Bezier) {
-		  flag = 0;
-		  break;
-		} */
-		
-		// count the beads near i and j, see if they have left the membrane alone
-		nquatk = avec_ellipsoid->bonus[ellipsoid[k]].quat;
-	    MathExtra::quat_to_mat_trans(nquatk,a3);
-	    nk1[0]=a3[0][0];
-        nk1[1]=a3[0][1];
-        nk1[2]=a3[0][2];
-		xik[0] = xk[0] - xi[0];    // vector from i to k
-		xik[1] = xk[1] - xi[1];
-		xik[2] = xk[2] - xi[2];
+        // see if k is near the points that are above or below the mid point
+        /* 		rabove = sqrt((xk[0] - xabove[0]) * (xk[0] - xabove[0]) + (xk[1] - xabove[1]) * (xk[1] - xabove[1]) + (xk[2] - xabove[2]) * (xk[2] - xabove[2]));
+        rbelow = sqrt((xk[0] - xbelow[0]) * (xk[0] - xbelow[0]) + (xk[1] - xbelow[1]) * (xk[1] - xbelow[1]) + (xk[2] - xbelow[2]) * (xk[2] - xbelow[2]));
+        if (rabove < d_Bezier || rbelow < d_Bezier) {
+          flag = 0;
+          break;
+        } */
+        
+        // count the beads near i and j, see if they have left the membrane alone
+        nquatk = avec_ellipsoid->bonus[ellipsoid[k]].quat;
+          MathExtra::quat_to_mat_trans(nquatk,a3);
+          nk1[0]=a3[0][0];
+            nk1[1]=a3[0][1];
+            nk1[2]=a3[0][2];
+        xik[0] = xk[0] - xi[0];    // vector from i to k
+        xik[1] = xk[1] - xi[1];
+        xik[2] = xk[2] - xi[2];
 
-
-
-		rik = sqrt(xik[0] * xik[0] + xik[1] * xik[1] + xik[2] * xik[2]);
-		if (rik < d_cut) {
-		  near_count_i++;
-		  
-		  // calculate the weighted mean of the cos(theta) between i or j and nearby paticles
-          MathExtra::normalize3(xik,r13hat);
-	      nink = MathExtra::dot3(ni1,nk1);
-          nik1rhat = MathExtra::dot3(ni1,r13hat);
-          nki1rhat = MathExtra::dot3(nk1,r13hat);
-	      a_ik = nink - nik1rhat * nki1rhat;
-		  a_ik_sum += a_ik / rik;
-		  r_ik_sum += 1 / rik;
-		}
-		xjk[0] = xk[0] - xj[0];    // vector from j to k
-		xjk[1] = xk[1] - xj[1];
-		xjk[2] = xk[2] - xj[2];
-		rjk = sqrt(xjk[0] * xjk[0] + xjk[1] * xjk[1] + xjk[2] * xjk[2]);
-		if (rjk < d_cut) {
-		  near_count_j++;
-		
-		  // calculate the weighted mean of the cos(theta) between i or j and nearby paticles
+        rik = sqrt(xik[0] * xik[0] + xik[1] * xik[1] + xik[2] * xik[2]);
+        if (rik < d_cut) {
+          near_count_i++;
+          
+          // calculate the weighted mean of the cos(theta) between i or j and nearby paticles
+              MathExtra::normalize3(xik,r13hat);
+            nink = MathExtra::dot3(ni1,nk1);
+              nik1rhat = MathExtra::dot3(ni1,r13hat);
+              nki1rhat = MathExtra::dot3(nk1,r13hat);
+            a_ik = nink - nik1rhat * nki1rhat;
+          a_ik_sum += a_ik / rik;
+          r_ik_sum += 1 / rik;
+        }
+        xjk[0] = xk[0] - xj[0];    // vector from j to k
+        xjk[1] = xk[1] - xj[1];
+        xjk[2] = xk[2] - xj[2];
+        rjk = sqrt(xjk[0] * xjk[0] + xjk[1] * xjk[1] + xjk[2] * xjk[2]);
+        if (rjk < d_cut) {
+          near_count_j++;
+          // calculate the weighted mean of the cos(theta) between i or j and nearby paticles
           MathExtra::normalize3(xjk,r23hat);
-	      njnk = MathExtra::dot3(nj1,nk1);
+          njnk = MathExtra::dot3(nj1,nk1);
           njk1rhat = MathExtra::dot3(nj1,r23hat);
           nkj1rhat = MathExtra::dot3(nk1,r23hat);
-	      a_jk = njnk - njk1rhat * nkj1rhat;
-		  a_jk_sum += a_jk / rjk;
-		  r_jk_sum += 1 / rjk;
-		}
-		if (rmidk < d_cut) {
-		  near_count_mid++;
-		
-		  // calculate the weighted mean of the cos(theta) between i or j and nearby paticles
+          a_jk = njnk - njk1rhat * nkj1rhat;
+          a_jk_sum += a_jk / rjk;
+          r_jk_sum += 1 / rjk;
+        }
+        if (rmidk < d_cut) {
+          near_count_mid++;
+          // calculate the weighted mean of the cos(theta) between i or j and nearby paticles
           MathExtra::normalize3(xmidk,r43hat);
-	      nmidnk = MathExtra::dot3(nmid1,nk1);
+          nmidnk = MathExtra::dot3(nmid1,nk1);
           nmidk1rhat = MathExtra::dot3(nmid1,r43hat);
           nkmid1rhat = MathExtra::dot3(nk1,r43hat);
-	      a_midk = nmidnk - nmidk1rhat * nkmid1rhat;
-		  a_midk_sum += a_midk / rmidk;
-		  r_midk_sum += 1 / rmidk;
-		}
-	  }
-	  xmidi[0] = xi[0] - xmid[0];    // vector from mid to i
-	  xmidi[1] = xi[1] - xmid[1];
-	  xmidi[2] = xi[2] - xmid[2];
-	  rmidi = sqrt(xmidi[0] * xmidi[0] + xmidi[1] * xmidi[1] + xmidi[2] * xmidi[2]);
-	  if (rmidi < d_cut) {
-	    near_count_mid++;
-	  
-	    // calculate the weighted mean of the cos(theta) between i or j and nearby paticles
-        MathExtra::normalize3(xmidi,r41hat);
-	    nmidni = MathExtra::dot3(nmid1,ni1);
-        nmidi1rhat = MathExtra::dot3(nmid1,r41hat);
-        nimid1rhat = MathExtra::dot3(ni1,r41hat);
-	    a_midi = nmidni - nmidi1rhat * nimid1rhat;
-	    a_midk_sum += a_midi / rmidi;
-	    r_midk_sum += 1 / rmidi;
-	  }
-	  xmidj[0] = xj[0] - xmid[0];    // vector from mid to j
-	  xmidj[1] = xj[1] - xmid[1];
-	  xmidj[2] = xj[2] - xmid[2];
-	  rmidj = sqrt(xmidj[0] * xmidj[0] + xmidj[1] * xmidj[1] + xmidj[2] * xmidj[2]);
-	  if (rmidj < d_cut) {
-	    near_count_mid++;
-	  
-	    // calculate the weighted mean of the cos(theta) between i or j and nearby paticles
-        MathExtra::normalize3(xmidj,r42hat);
-	    nmidnj = MathExtra::dot3(nmid1,nj1);
-        nmidj1rhat = MathExtra::dot3(nmid1,r42hat);
-        njmid1rhat = MathExtra::dot3(nj1,r42hat);
-	    a_midj = nmidnj - nmidj1rhat * njmid1rhat;
-	    a_midk_sum += a_midj / rmidj;
-	    r_midk_sum += 1 / rmidj;
-	  }
-	  if (flag) {
-		// if (near_count_i < near_num_limit && itype == lipid_type) flag = 0;
-		// if (near_count_j < near_num_limit && jtype == lipid_type) flag = 0;
-		if (near_count_i < near_num_limit) flag = 0;
-		if (near_count_j < near_num_limit) flag = 0;
-		if (near_count_mid < near_num_limit) flag = 0;
-	  }
-	  if (flag) {
-		if (a_ik_sum / r_ik_sum < a_near_min) flag = 0;
-		if (a_jk_sum / r_jk_sum < a_near_min) flag = 0;
-		if (a_midk_sum / r_midk_sum < a_near_min) flag = 0;
-	  }
-	  if (flag) {
-	    for (kk = 0; kk < count; kk++) {
-		  xmidk[0] = xnew[kk][0] - xmid[0];    // vector from mid point to k
-		  xmidk[1] = xnew[kk][1] - xmid[1];
-		  xmidk[2] = xnew[kk][2] - xmid[2];
-		  rmidk_ji = xmidk[0] * r12hat[0] + xmidk[1] * r12hat[1] + xmidk[2] * r12hat[2];    // the length between mid point and the projection of k at the ji vector
-		  if (rmidk_ji * rmidk_ji > r * r / 4) continue;
-		  rmidk_v = sqrt((xmidk[0] - rmidk_ji * r12hat[0]) * (xmidk[0] - rmidk_ji * r12hat[0]) + (xmidk[1] - rmidk_ji * r12hat[1]) * (xmidk[1] - rmidk_ji * r12hat[1]) + (xmidk[2] - rmidk_ji * r12hat[2]) * (xmidk[2] - rmidk_ji * r12hat[2]));    // distance between k and the projection of k at the ji vector
-		  if (rmidk_v < r_detect * sqrt(1 - 4 * rmidk_ji * rmidk_ji / r / r)) {    // see if k is in the ellipsoid between i and j, long axis is r/2, short axis is r_detect
-		    flag = 0;
-		    break;
-		  }
-	    }
-	  }
-    if (random_ignorance_flag==2) {
-      flag = 0;
-      if (random_test[0]->uniform()>=p_add) continue;
-    }
-	  if (flag) {
+          a_midk = nmidnk - nmidk1rhat * nkmid1rhat;
+          a_midk_sum += a_midk / rmidk;
+          r_midk_sum += 1 / rmidk;
+        }
+      }
 
+      xmidi[0] = xi[0] - xmid[0];    // vector from mid to i
+      xmidi[1] = xi[1] - xmid[1];
+      xmidi[2] = xi[2] - xmid[2];
+      rmidi = sqrt(xmidi[0] * xmidi[0] + xmidi[1] * xmidi[1] + xmidi[2] * xmidi[2]);
 
+      if (rmidi < d_cut) {
+        near_count_mid++;
+      
+        // calculate the weighted mean of the cos(theta) between i or j and nearby paticles
+          MathExtra::normalize3(xmidi,r41hat);
+        nmidni = MathExtra::dot3(nmid1,ni1);
+          nmidi1rhat = MathExtra::dot3(nmid1,r41hat);
+          nimid1rhat = MathExtra::dot3(ni1,r41hat);
+        a_midi = nmidni - nmidi1rhat * nimid1rhat;
+        a_midk_sum += a_midi / rmidi;
+        r_midk_sum += 1 / rmidi;
+      }
+      xmidj[0] = xj[0] - xmid[0];    // vector from mid to j
+      xmidj[1] = xj[1] - xmid[1];
+      xmidj[2] = xj[2] - xmid[2];
+      rmidj = sqrt(xmidj[0] * xmidj[0] + xmidj[1] * xmidj[1] + xmidj[2] * xmidj[2]);
 
+      if (rmidj < d_cut) {
+        near_count_mid++;
+      
+        // calculate the weighted mean of the cos(theta) between i or j and nearby paticles
+          MathExtra::normalize3(xmidj,r42hat);
+        nmidnj = MathExtra::dot3(nmid1,nj1);
+          nmidj1rhat = MathExtra::dot3(nmid1,r42hat);
+          njmid1rhat = MathExtra::dot3(nj1,r42hat);
+        a_midj = nmidnj - nmidj1rhat * njmid1rhat;
+        a_midk_sum += a_midj / rmidj;
+        r_midk_sum += 1 / rmidj;
+      }
+      if (flag) {
+        // if (near_count_i < near_num_limit && itype == lipid_type) flag = 0;
+        // if (near_count_j < near_num_limit && jtype == lipid_type) flag = 0;
+        if (near_count_i < near_num_limit) flag = 0;
+        if (near_count_j < near_num_limit) flag = 0;
+        if (near_count_mid < near_num_limit) flag = 0;
+      }
+      if (flag) {
+        if (a_ik_sum / r_ik_sum < a_near_min) flag = 0;
+        if (a_jk_sum / r_jk_sum < a_near_min) flag = 0;
+        if (a_midk_sum / r_midk_sum < a_near_min) flag = 0;
+      }
+      if (flag) {
+        for (kk = 0; kk < count; kk++) {
+          xmidk[0] = xnew[kk][0] - xmid[0];    // vector from mid point to k
+          xmidk[1] = xnew[kk][1] - xmid[1];
+          xmidk[2] = xnew[kk][2] - xmid[2];
+          rmidk_ji = xmidk[0] * r12hat[0] + xmidk[1] * r12hat[1] + xmidk[2] * r12hat[2];    // the length between mid point and the projection of k at the ji vector
+          if (rmidk_ji * rmidk_ji > r * r / 4) continue;
+          rmidk_v = sqrt((xmidk[0] - rmidk_ji * r12hat[0]) * (xmidk[0] - rmidk_ji * r12hat[0]) + (xmidk[1] - rmidk_ji * r12hat[1]) * (xmidk[1] - rmidk_ji * r12hat[1]) + (xmidk[2] - rmidk_ji * r12hat[2]) * (xmidk[2] - rmidk_ji * r12hat[2]));    // distance between k and the projection of k at the ji vector
+          if (rmidk_v < r_detect * sqrt(1 - 4 * rmidk_ji * rmidk_ji / r / r)) {    // see if k is in the ellipsoid between i and j, long axis is r/2, short axis is r_detect
+            flag = 0;
+            break;
+          }
+        }
+      }
+      if (random_ignorance_flag==2) {
+        flag = 0;
+        if (random_test[0]->uniform()>=p_add) continue;
+      }
+      
+      if (flag) {
+        xnew[count][0] = xmid[0];    // position
+        xnew[count][1] = xmid[1];
+        xnew[count][2] = xmid[2];
+        xnew[count][3] = (v[i][0] + v[j][0]) / 2;    // velocity
+        xnew[count][4] = (v[i][1] + v[j][1]) / 2;
+        xnew[count][5] = (v[i][2] + v[j][2]) / 2;
+        xnew[count][6] = nquatmid[0];    // quaternions
+        xnew[count][7] = nquatmid[1];
+        xnew[count][8] = nquatmid[2];
+        xnew[count][9] = nquatmid[3];
+        // if (itype == lipid_type) masknew[count] = mask[i];
+        // else if (jtype == lipid_type) masknew[count] = mask[j];
+        count++;
 
+        //limit_neigh[0]=i;
+        //limit_neigh[1]=j;
+        //limit_neigh_list.push_back(limit_neigh);
 
-      xnew[count][0] = xmid[0];    // position
-      xnew[count][1] = xmid[1];
-      xnew[count][2] = xmid[2];
-      xnew[count][3] = (v[i][0] + v[j][0]) / 2;    // velocity
-      xnew[count][4] = (v[i][1] + v[j][1]) / 2;
-      xnew[count][5] = (v[i][2] + v[j][2]) / 2;
-      xnew[count][6] = nquatmid[0];    // quaternions
-      xnew[count][7] = nquatmid[1];
-      xnew[count][8] = nquatmid[2];
-      xnew[count][9] = nquatmid[3];
-      // if (itype == lipid_type) masknew[count] = mask[i];
-      // else if (jtype == lipid_type) masknew[count] = mask[j];
-      count++;
-
-      //limit_neigh[0]=i;
-      //limit_neigh[1]=j;
-      //limit_neigh_list.push_back(limit_neigh);
-
-      if (need_neighbours_flag) {
-
-
-
+        if (need_neighbours_flag) {
         for (k = 0; k < nlocalghost; k++) {
 
           ktype = type[k];
@@ -1103,7 +1030,6 @@ void FixAddLipid::pre_exchange()
           rmidk = xmidk[0] * xmidk[0] + xmidk[1] * xmidk[1] + xmidk[2] * xmidk[2];
 
           if (rmidk <= nearest_neighbours_distance[num_nn - 1]) {
-
             // Find position to insert rmidk by scanning from the end for efficiency
             last_neighbour = num_nn - 1;
             while (last_neighbour > 0 && rmidk < nearest_neighbours_distance[last_neighbour - 1]) {
@@ -1112,16 +1038,13 @@ void FixAddLipid::pre_exchange()
               nearest_neighbours[last_neighbour] = nearest_neighbours[last_neighbour - 1];
               last_neighbour--;
             }
-
             // Insert rmidk and k at the found position
             nearest_neighbours_distance[last_neighbour] = rmidk;
             nearest_neighbours[last_neighbour] = k;
           }
 
           if (need_neighbours_flag==2){
-
             if (rmidk <= nearest_neighbours_distance_ignore[num_nn_ignore - 1]) {
-
               // Find position to insert rmidk by scanning from the end for efficiency
               last_neighbour = num_nn_ignore - 1;
               while (last_neighbour > 0 && rmidk < nearest_neighbours_distance_ignore[last_neighbour - 1]) {
@@ -1130,7 +1053,6 @@ void FixAddLipid::pre_exchange()
                 nearest_neighbours_ignore[last_neighbour] = nearest_neighbours_ignore[last_neighbour - 1];
                 last_neighbour--;
               }
-
               // Insert rmidk and k at the found position
               nearest_neighbours_distance_ignore[last_neighbour] = rmidk;
               nearest_neighbours_ignore[last_neighbour] = k;
@@ -1142,134 +1064,102 @@ void FixAddLipid::pre_exchange()
           }
         }
 
-
-
-
         for (in = 0; in < num_nn; in++) {
-
-              if (nearest_neighbours[in] > -1) {
-                if (stabilize_neigh_flag) {
+          if (nearest_neighbours[in] > -1) {
+            if (stabilize_neigh_flag) {
               i_limit_tags[nearest_neighbours[in]] = update->ntimestep + 1;
               i_statted_tags[nearest_neighbours[in]] = 0;
             }
 
-                if (ignore_neigh_flag == 2 && need_neighbours_flag==1) {
-                  //fprintf(stderr, "Setting neighbours ");
+            if (ignore_neigh_flag == 2 && need_neighbours_flag==1) {
+              //fprintf(stderr, "Setting neighbours ");
 
-                  i_ignore_tags[nearest_neighbours[in]] = update->ntimestep + 1;
-                  i_ignored_tags[nearest_neighbours[in]] = 1;
-                }
-                //if (nearest_neighbours[in] > nlocal) fprintf(stderr, "GHOOOOOOST!!!");
-              }
+              i_ignore_tags[nearest_neighbours[in]] = update->ntimestep + 1;
+              i_ignored_tags[nearest_neighbours[in]] = 1;
+            }
+            //if (nearest_neighbours[in] > nlocal) fprintf(stderr, "GHOOOOOOST!!!");
+          }
         }
 
         if (ignore_neigh_flag==2 && need_neighbours_flag==2){
-
-              for (in = 0; in < num_nn_ignore; in++) {
-
-                if (nearest_neighbours_ignore[in] > -1) {
-
-
-                i_ignore_tags[nearest_neighbours_ignore[in]] = update->ntimestep + 1;
-                i_ignored_tags[nearest_neighbours_ignore[in]] = 1;
-
-                  //if (nearest_neighbours[in] > nlocal) fprintf(stderr, "GHOOOOOOST!!!");
-                }
-              }
-
+          for (in = 0; in < num_nn_ignore; in++) {
+            if (nearest_neighbours_ignore[in] > -1) {
+              i_ignore_tags[nearest_neighbours_ignore[in]] = update->ntimestep + 1;
+              i_ignored_tags[nearest_neighbours_ignore[in]] = 1;
+            }
+          }
         }
-
-        // i_limit_tags[i] = update->ntimestep + 1;
-        // if (stabilization_flag == 1) i_statted_tags[i] = 0;
-        // i_limit_tags[j] = update->ntimestep + 1;
-        // if (stabilization_flag == 1) i_statted_tags[j] = 0;
-        // ni++;
       }
-
-
-
-
-   // fprintf(stderr, "Check post calc");
-
-		//fprintf(stderr, "In fix addlipid at proc %d when time = %d: a lipid atom at %f %f %f was added, atom->tag[i] = %d, x[i][0] = %f, x[i][1] = %f, x[i][2] = %f, atom->tag[j] = %d, x[j][0] = %f, x[j][1] = %f, x[j][2] = %f\n", comm->me, update->ntimestep, xmid[0], xmid[1], xmid[2], atom->tag[i], x[i][0], x[i][1], x[i][2], atom->tag[j], x[j][0], x[j][1], x[j][2]);
-	  }
-	}
+	    }
+    }
   }
-  // fprintf(stderr, "In fix addlipid at proc %d when time = %d: all 02\n", comm->me, update->ntimestep);
+
   MPI_Allreduce(&count,&count_global,1,MPI_INT,MPI_SUM,world);
- // if (count) fprintf(stderr, "In fix addlipid at proc %d when time = %d: count = %d, count_global = %d\n", comm->me, update->ntimestep, count, count_global);
- // if (!count_global && comm->me == 0) fprintf(stderr, "In fix addlipid when time = %d: no new lipid was added\n", update->ntimestep);
   added_num += count_global;
   if (added_num >= add_num) add_flag = 0;    // stop adding atoms when added number exceed max number
-  // fprintf(stderr, "In fix addlipid at proc %d when time = %d: all 03\n", comm->me, update->ntimestep);
   
   if (count_global) {
     // int *create_num_local;
-	double *xnew0_local;
-	double *xnew1_local;
-	double *xnew2_local;
-	double *xnew0;
-	double *xnew1;
-	double *xnew2;
-    int *create_num_local;
-	int *create_num_proc;
-    int *displs;
-	int nprocs = comm->nprocs;
-	
-	// memory->create(create_num_local,nprocs,"fix_addlipid:create_num_local");
-	memory->create(xnew0_local,count,"fix_addlipid:xnew0_local");
-	memory->create(xnew1_local,count,"fix_addlipid:xnew1_local");
-	memory->create(xnew2_local,count,"fix_addlipid:xnew2_local");
-	memory->create(create_num_proc,nprocs,"fix_addlipid:create_num_proc");
+    double *xnew0_local;
+    double *xnew1_local;
+    double *xnew2_local;
+    double *xnew0;
+    double *xnew1;
+    double *xnew2;
+      int *create_num_local;
+    int *create_num_proc;
+      int *displs;
+    int nprocs = comm->nprocs;
+    
+    // memory->create(create_num_local,nprocs,"fix_addlipid:create_num_local");
+    memory->create(xnew0_local,count,"fix_addlipid:xnew0_local");
+    memory->create(xnew1_local,count,"fix_addlipid:xnew1_local");
+    memory->create(xnew2_local,count,"fix_addlipid:xnew2_local");
+    memory->create(create_num_proc,nprocs,"fix_addlipid:create_num_proc");
     memory->create(displs,nprocs,"fix_addlipid:displs");
 	
 	
-	if (nprocs > 1) {
-	  MPI_Allgather(&count, 1, MPI_INT, create_num_proc, 1, MPI_INT, world);
+    if (nprocs > 1) {
+      MPI_Allgather(&count, 1, MPI_INT, create_num_proc, 1, MPI_INT, world);
+      }
+    
+    for (ii = 0; ii < count; ii++) {
+      xnew0_local[ii] = xnew[ii][0];
+      xnew1_local[ii] = xnew[ii][1];
+      xnew2_local[ii] = xnew[ii][2];
+    }
+    
+    int kn = 0;
+    for (i = 0; i < nprocs; i++){
+        displs[i] = kn;
+        kn += create_num_proc[i];
+    }
+    
+    memory->create(xnew0,kn,"fix_addlipid:xnew0");
+    memory->create(xnew1,kn,"fix_addlipid:xnew1");
+    memory->create(xnew2,kn,"fix_addlipid:xnew2");
+	
+	  if (nprocs > 1) {
+      MPI_Allgatherv(xnew0_local, count, MPI_DOUBLE, xnew0, create_num_proc, displs, MPI_DOUBLE, world);
+      MPI_Allgatherv(xnew1_local, count, MPI_DOUBLE, xnew1, create_num_proc, displs, MPI_DOUBLE, world);
+      MPI_Allgatherv(xnew2_local, count, MPI_DOUBLE, xnew2, create_num_proc, displs, MPI_DOUBLE, world);
     }
 	
-	for (ii = 0; ii < count; ii++) {
-	  xnew0_local[ii] = xnew[ii][0];
-	  xnew1_local[ii] = xnew[ii][1];
-	  xnew2_local[ii] = xnew[ii][2];
-	}
-	
-	int kn = 0;
-    for (i = 0; i < nprocs; i++){
-      displs[i] = kn;
-      kn += create_num_proc[i];
-	}
-	
-	memory->create(xnew0,kn,"fix_addlipid:xnew0");
-	memory->create(xnew1,kn,"fix_addlipid:xnew1");
-	memory->create(xnew2,kn,"fix_addlipid:xnew2");
-	
-	if (nprocs > 1) {
-	  MPI_Allgatherv(xnew0_local, count, MPI_DOUBLE, xnew0, create_num_proc, displs, MPI_DOUBLE, world);
-	  MPI_Allgatherv(xnew1_local, count, MPI_DOUBLE, xnew1, create_num_proc, displs, MPI_DOUBLE, world);
-	  MPI_Allgatherv(xnew2_local, count, MPI_DOUBLE, xnew2, create_num_proc, displs, MPI_DOUBLE, world);
-	}
-	
-	// clear ghost count and any ghost bonus data internal to AtomVec
+	  // clear ghost count and any ghost bonus data internal to AtomVec
     // same logic as beginning of Comm::exchange()
     // do it now b/c inserting atoms will overwrite ghost atoms
 
- // fprintf(stderr, "Check pre comm");
     if (need_neighbours_flag) {
-    commflag = 2;
-    //  statted_vec=i_statted_tags;
-    // limit_vec=i_limit_tags;
-    comm->reverse_comm(this);
-  }
+      commflag = 2;
+      //  statted_vec=i_statted_tags;
+      // limit_vec=i_limit_tags;
+      comm->reverse_comm(this);
+    }
 
-    
     atom->nghost = 0;
     atom->avec->clear_bonus();
 
-
-    
     // add atoms/molecules in one of 3 ways
-    
     bigint natoms_previous = atom->natoms;
     int nlocal_previous = atom->nlocal;
     
@@ -1277,18 +1167,18 @@ void FixAddLipid::pre_exchange()
     
     // find_maxid();
     
-	// box size
-	double *lo, *hi;
-	double xprd, yprd, zprd, deltax, deltay, deltaz, rr0, rr1, rr2, rr3, rr4, rr5, rr6;
-	int pre_num;
-	lo = domain->boxlo;
-	hi = domain->boxhi;
-	xprd = domain->xprd;
-	yprd = domain->yprd;
-	zprd = domain->zprd;
-	// if (update->ntimestep % 1000) fprintf(stderr, "In fix addlipid at proc %d when time = %d: lo[0] = %f, lo[1] = %f, lo[2] = %f, hi[0] = %f, hi[1] = %f, hi[2] = %f, xprd = %f, yprd = %f, zprd = %f\n", comm->me, update->ntimestep, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], xprd, yprd, zprd);
+    // box size
+    double *lo, *hi;
+    double xprd, yprd, zprd, deltax, deltay, deltaz, rr0, rr1, rr2, rr3, rr4, rr5, rr6;
+    int pre_num;
+    lo = domain->boxlo;
+    hi = domain->boxhi;
+    xprd = domain->xprd;
+    yprd = domain->yprd;
+    zprd = domain->zprd;
+	  // if (update->ntimestep % 1000) fprintf(stderr, "In fix addlipid at proc %d when time = %d: lo[0] = %f, lo[1] = %f, lo[2] = %f, hi[0] = %f, hi[1] = %f, hi[2] = %f, xprd = %f, yprd = %f, zprd = %f\n", comm->me, update->ntimestep, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], xprd, yprd, zprd);
     
-	// insert new lipid atoms
+	  // insert new lipid atoms
     for (ii = 0; ii < count; ii++) {
 	  xi[0] = xnew[ii][0];
 	  xi[1] = xnew[ii][1];
@@ -1355,14 +1245,7 @@ void FixAddLipid::pre_exchange()
     // note that for typical early use of create_atoms,
     //   no fixes/computes/variables exist yet
 
-
-
-
     nlocal = atom->nlocal;
-
-
-
-
 
    // int flag,cols;
    // index1 = atom->find_custom("limit_tags", flag_st, cols);
@@ -1370,7 +1253,6 @@ void FixAddLipid::pre_exchange()
     //int *i_statted_tags;
    // index2 = atom->find_custom(statted_id, flag_st, cols);
     //i_statted_tags = atom->ivector[index2];
-
 
     for (m = 0; m < modify->nfix; m++) {
       Fix *fix = modify->fix[m];
@@ -1384,7 +1266,6 @@ void FixAddLipid::pre_exchange()
         for (i = nlocal_previous; i < nlocal; i++) compute->set_arrays(i);
     }
 
-
     for (i = nlocal_previous; i < nlocal; i++) {
 
 
@@ -1394,72 +1275,51 @@ void FixAddLipid::pre_exchange()
 
 
       }
-
-
-
-
-
       //fprintf(stderr,
       //          "In fix addlipid at proc %d when time = %d: a lipid atom %d at %f %f %f was added with mass \n",
       //          comm->me, update->ntimestep, atom->tag[i], x[i][0], x[i][1], x[i][2]);
-
-
-
-
-
-    //for (i=0;i<count;i++) {
-    //  i_limit_tags[atom->tag[limit_neigh_list[i][0]]] = update->ntimestep + 1;
-    //  if (stabilization_flag == 1) i_statted_tags[atom->tag[limit_neigh_list[i][0]]] = 0;
-    //  i_limit_tags[atom->tag[limit_neigh_list[i][1]]] = update->ntimestep + 1;
-    //  if (stabilization_flag == 1) i_statted_tags[atom->tag[limit_neigh_list[i][1]]] = 0;
-    //}
-    // set new total # of atoms and error check
+      //for (i=0;i<count;i++) {
+      //  i_limit_tags[atom->tag[limit_neigh_list[i][0]]] = update->ntimestep + 1;
+      //  if (stabilization_flag == 1) i_statted_tags[atom->tag[limit_neigh_list[i][0]]] = 0;
+      //  i_limit_tags[atom->tag[limit_neigh_list[i][1]]] = update->ntimestep + 1;
+      //  if (stabilization_flag == 1) i_statted_tags[atom->tag[limit_neigh_list[i][1]]] = 0;
+      //}
+      // set new total # of atoms and error check
     
-    bigint nblocal = atom->nlocal;
-    MPI_Allreduce(&nblocal,&atom->natoms,1,MPI_LMP_BIGINT,MPI_SUM,world);
-    if (atom->natoms < 0 || atom->natoms >= MAXBIGINT)
-      error->all(FLERR,"Too many total atoms");
-    
-    // add IDs for newly created atoms
-    // check that atom IDs are valid
-    
-    if (atom->tag_enable) atom->tag_extend();
-    atom->tag_check();
-    
-    // if global map exists, reset it
-    // invoke map_init() b/c atom count has grown
-    
-    if (atom->map_style) {
-      atom->map_init();
-      atom->map_set();
-    }
+      bigint nblocal = atom->nlocal;
+      MPI_Allreduce(&nblocal,&atom->natoms,1,MPI_LMP_BIGINT,MPI_SUM,world);
+      if (atom->natoms < 0 || atom->natoms >= MAXBIGINT) error->all(FLERR,"Too many total atoms");
+      
+      // add IDs for newly created atoms
+      // check that atom IDs are valid
+      
+      if (atom->tag_enable) atom->tag_extend();
+      atom->tag_check();
+      
+      // if global map exists, reset it
+      // invoke map_init() b/c atom count has grown
+      
+      if (atom->map_style) {
+        atom->map_init();
+        atom->map_set();
+      }
 
    // i_limit_tags = atom->ivector[index1];
    // i_statted_tags = atom->ivector[index2];
 
-
-
-
     ni=0;
-    {
     for (i = nlocal_previous; i < nlocal; i++) {
-        if (stabilization_flag == 1) {
-          i_limit_tags[i] = update->ntimestep + 1;
-          i_statted_tags[i] = 0;
-            }
-
-        if (ignore_neigh_flag == 2) {
-      i_ignore_tags[i] = update->ntimestep + 1;
-      i_ignored_tags[i] = 1;
-        }
+      if (stabilization_flag == 1) {
+        i_limit_tags[i] = update->ntimestep + 1;
+        i_statted_tags[i] = 0;
       }
-
+      if (ignore_neigh_flag == 2) {
+        i_ignore_tags[i] = update->ntimestep + 1;
+        i_ignored_tags[i] = 1;
+      }
     }
-  // MW : adding particles to the nve/limit statted group
+    // MW : adding particles to the nve/limit statted group
     //if (stabilization_flag) {
-
-
-
      // }
     memory->destroy(xnew0_local);
     memory->destroy(xnew1_local);
@@ -1469,28 +1329,18 @@ void FixAddLipid::pre_exchange()
     memory->destroy(xnew0);
     memory->destroy(xnew1);
     memory->destroy(xnew2);
-
    // delete[] nearest_neighbours;
    // delete[] nearest_neighbours_distance;
   }
 
-  // fprintf(stderr, "In fix addlipid at proc %d when time = %d: all 04\n", comm->me, update->ntimestep);
-
   // free local memory
-//update_everything();
-
-      if ((stabilization_flag==1 ||  ignore_neigh_flag==2 )) unlimit_bond();
+  //update_everything();
+  if ((stabilization_flag==1 ||  ignore_neigh_flag==2 )) unlimit_bond();
 
   memory->destroy(xnew);
   memory->destroy(masknew);
-
-
-
-
-
   // fprintf(stderr, "In fix addlipid at proc %d when time = %d: all 05\n", comm->me, update->ntimestep);
 }
-
 /* ----------------------------------------------------------------------
    maxtag_all = current max atom ID for all atoms
    maxmol_all = current max molecule ID for all atoms
