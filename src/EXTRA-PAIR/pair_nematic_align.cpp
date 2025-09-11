@@ -347,3 +347,39 @@ void PairNematicAlign::compute(int eflag, int vflag)
 
   if (vflag_fdotr) virial_fdotr_compute();
 }
+
+
+
+double PairNematicAlign::single(int i, int j, int itype, int jtype, double rsq, double factor_coul,
+                               double factor_lj, double &fforce)
+{
+  // cutoff guard
+  double rc = cut[itype][jtype] > 0.0 ? cut[itype][jtype] : cut_global;
+  if (rsq >= rc * rc) {
+    fforce = 0.0;
+    return 0.0;
+  }
+
+  double energy = 0.0;
+  double wca_force_over_r = 0.0;
+
+  // WCA repulsion (if enabled)
+  if (wca_flag[itype][jtype]) {
+      double lj_s = lj_sigma[itype][jtype];
+      double wca_cut = 1.12246204831 * lj_s;
+      double r = sqrt(rsq);
+      double rinv = 1 / r;
+      if (r < wca_cut) {
+          double lj_e = lj_epsilon[itype][jtype];
+          double sr2 = lj_s * lj_s / rsq;
+          double sr6 = sr2 * sr2 * sr2;
+          double sr12 = sr6 * sr6;
+
+          wca_force_over_r += 48.0 * lj_e * (sr12 - 0.5 * sr6) * rinv * rinv;
+          energy += 4.0 * lj_e * (sr12 - sr6) + lj_e;
+      }
+  }
+
+fforce = -wca_force_over_r * factor_lj;    // -dU/dr
+return energy * factor_lj;
+}
