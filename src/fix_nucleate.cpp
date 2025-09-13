@@ -87,8 +87,8 @@ void FixNucleate::init() {
 
 int FixNucleate::setmask() {
   int mask = 0;
-  mask |= POST_INTEGRATE;
-  mask |= POST_INTEGRATE_RESPA;
+  mask |= PRE_EXCHANGE;
+  // mask |= POST_INTEGRATE_RESPA;
   return mask;
 }
 
@@ -97,7 +97,7 @@ void FixNucleate::init_list(int /*id*/, NeighList *ptr)
   list = ptr;
 }
 
-void FixNucleate::post_integrate() {
+void FixNucleate::pre_exchange() {
   if (update->ntimestep % nevery) return;
 
   int n_nucleate_group = 0;
@@ -110,7 +110,14 @@ void FixNucleate::post_integrate() {
   // already initialised to 0.0
   memory->create(insert_coords, comm->nprocs*max_nucleate_global, 6, "fix_nucleate:insert_coords");
   memory->create(filled_coords_flags, comm->nprocs*max_nucleate_global, "fix_nucleate:filled_coords_flags");
-
+  
+  // initialize arrays so the MPI_Allreduce works correctly
+  for(int i=0;i<comm->nprocs*max_nucleate_global;i++) {
+    insert_coords[i][0] = insert_coords[i][1] = insert_coords[i][2] = 0.0;
+    insert_coords[i][3] = insert_coords[i][4] = insert_coords[i][5] = 0.0;
+    filled_coords_flags[i] = 0;
+  }
+  
   // create a set of unique random indices to nucleate at
   std::set<int> nucleate_indices;
   while (nucleate_indices.size() < n_nucleate_local) {
@@ -143,6 +150,7 @@ void FixNucleate::post_integrate() {
 
   int n_added_local = 0;
   int nright_group = -1; // start at -1 for so it serves as indices
+
   for(int iatom=0; iatom<nlocal; iatom++) {
     int ilocal = ilist[iatom];
     // make sure we have an atom from target group
@@ -192,61 +200,79 @@ void FixNucleate::post_integrate() {
   }
 
   // communicate all inserted coords to all procs
-  MPI_Allreduce(MPI_IN_PLACE, insert_coords, comm->nprocs*max_nucleate_global*6, MPI_DOUBLE, MPI_SUM, world);
+  for (int i=0; i < comm->nprocs*max_nucleate_global; i++) {
+    MPI_Allreduce(MPI_IN_PLACE, insert_coords[i], 6, MPI_DOUBLE, MPI_SUM, world);
+  }
   MPI_Allreduce(MPI_IN_PLACE, filled_coords_flags, comm->nprocs*max_nucleate_global, MPI_INT, MPI_SUM, world);
-
-  std::printf("Proc %d: Attempted %d nucleation events, %d successful\n", comm->me, n_nucleate_local, n_added_local);
+  
   // now that candidates have been communicated, check for overlaps and insert
   int owned_by_proc = 0;
   int overlapflag = 0;
+  int is_mine[comm->nprocs*max_nucleate_global], n_mine=0, n_before=0;
   for (int icoord=0; icoord < comm->nprocs*max_nucleate_global; icoord++) {
-    printf("Filled coords flag[%d]: %d\n", icoord, filled_coords_flags[icoord]);
+    is_mine[icoord] = 0;
     if (!filled_coords_flags[icoord]) continue; // make sure some process wrote coords here
 
     // check if this proc owns the coords to be inserted
     check_ownership(insert_coords[icoord], owned_by_proc);
     if (!owned_by_proc) continue;
+    
+    is_mine[icoord] = 1;
+  }
 
-    printf("Checking overlap at: x=(%g, %g, %g)\n", insert_coords[icoord][0], insert_coords[icoord][1], insert_coords[icoord][2]);
+  if (atom->map_style != Atom::MAP_NONE) atom->map_clear();
+  atom->nghost = 0;
+  atom->avec->clear_bonus(); // no clue what this is for
+
+  int my_insertions = 0, global_insertions = 0, nlocal_prev=atom->nlocal;
+  for (int icoord=0; icoord < comm->nprocs*max_nucleate_global; icoord++) {
+    if (!is_mine[icoord]) continue;
+
+    std::printf("Proc %d: Checking overlap at: x=(%g, %g, %g)\n", comm->me, insert_coords[icoord][0], insert_coords[icoord][1], insert_coords[icoord][2]);
+    
     // check if there is an overlap with existing atoms
     check_overlap(insert_coords[icoord], overlapflag);
     if (overlapflag) continue;
-
-    atom->nghost = 0;
-    atom->avec->clear_bonus(); // no clue what this is for
-    std::printf("Proc %d: Inserted atom %d at (%g, %g, %g)\n", comm->me, atom->tag[atom->nlocal-1], atom->x[atom->nlocal-1][0], atom->x[atom->nlocal-1][1], atom->x[atom->nlocal-1][2]);
+    
+    // std::printf("Proc %d: Inserted atom %d at (%g, %g, %g)\n", comm->me, atom->tag[atom->nlocal-1], atom->x[atom->nlocal-1][0], atom->x[atom->nlocal-1][1], atom->x[atom->nlocal-1][2]);
     atom->avec->create_atom(2, insert_coords[icoord]);
     int newind = atom->nlocal - 1;
-    std::printf("Proc %d: Inserted atom %d at (%g, %g, %g)\n", comm->me, atom->tag[atom->nlocal-1], atom->x[atom->nlocal-1][0], atom->x[atom->nlocal-1][1], atom->x[atom->nlocal-1][2]);
-    if (atom->tag_enable) atom->tag_extend();
-    atom->tag_check();
     
-    MPI_Allreduce(MPI_IN_PLACE, &maxmol_all, 1, MPI_LMP_TAGINT, MPI_MAX, world);
-    atom->molecule[newind] = ++maxmol_all;
-
     initialise_v(atom->v[newind], atom->rmass[newind]);
-    atom->natoms += 1;
-    if (atom->natoms < 0)
-      error->all(FLERR,"Too many total atoms");
-    if (max_atomtag >= MAXTAGINT)
-      error->all(FLERR,"New atom IDs exceed maximum allowed ID");
 
     atom->mask[newind] = 1 | groupbit;
-    atom->image[newind] = 0;
+    atom->image[newind] = ((imageint) IMGMAX << IMG2BITS) |
+        ((imageint) IMGMAX << IMGBITS) | IMGMAX;
     modify->create_attribute(newind);
 
-    // comm->forward_comm(); // not sure if needed
-    // reset atom->map, no idea what this does
-    if (atom->map_style != Atom::MAP_NONE) {
-      atom->map_init();
-      atom->map_set();
-    }
-    std::printf("Proc %d: Inserted atom %d at (%g, %g, %g)\n", comm->me, atom->tag[newind], atom->x[newind][0], atom->x[newind][1], atom->x[newind][2]);
-    std::printf("Atom got tag: %d and molecule ID: %d\n", atom->tag[newind], atom->molecule[newind]);
+    my_insertions++;
   }
 
+  MPI_Scan(&my_insertions, &global_insertions, 1, MPI_INT, MPI_SUM, world);
+  int n_insert_before = global_insertions - my_insertions;
+  for (int iinsert=0; iinsert<my_insertions; iinsert++) {
+    atom->tag[nlocal_prev+iinsert] = max_atomtag + n_insert_before + iinsert + 1;
+    atom->molecule[nlocal_prev+iinsert] = maxmol_all + n_insert_before + iinsert + 1;
+  }
+
+  bigint nblocal = atom->nlocal;
+  MPI_Allreduce(&nblocal,&atom->natoms,1,MPI_LMP_BIGINT,MPI_SUM,world);
+  if (atom->natoms < 0)
+    error->all(FLERR,"Too many total atoms");
+
+  // reset atom->map, no idea what this does
+  if (atom->map_style != Atom::MAP_NONE) {
+    atom->map_init();
+    atom->map_set();
+  }
+  
+  // if (atom->tag_enable) atom->tag_extend(); doing this myself now
+  atom->tag_check();
+  
   memory->destroy(insert_coords);
   memory->destroy(filled_coords_flags);
+
+  next_reneighbor = update->ntimestep + 1; // force reneighbor next step
 }
 
 void FixNucleate::post_integrate_respa(int ilevel, int /*iloop*/)
