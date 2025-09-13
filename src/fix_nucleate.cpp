@@ -22,6 +22,8 @@
 using namespace LAMMPS_NS;
 using namespace FixConst;
 
+enum { WARN, NOWARN }; // warnflag values
+
 FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg) {
   int iarg = 3;
 
@@ -33,13 +35,14 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
   prob = 1.;
   r_surf = 1.0;
   overlap = 0; overlapsq=0;
+  warnflag = WARN;
 
   // parse kwargs
   while (iarg < narg) {
     if (strcmp(arg[iarg], "prob") == 0) {
       if (iarg + 2 > narg)
         error->all(FLERR, "Missing numeric parameter after prob kwarg.");
-            
+
       prob = utils::numeric(FLERR, arg[iarg+1], false, lmp);
       iarg += 2;
     } else if (strcmp(arg[iarg],"Rsurf") == 0) {
@@ -55,6 +58,9 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
       overlap = utils::numeric(FLERR, arg[iarg+1], false, lmp);
       overlapsq = overlap*overlap;
       iarg += 2;
+    } else if (strcmp(arg[iarg],"nowarn") == 0) {
+      warnflag = NOWARN;
+      iarg += 1;
     } else {
       error->all(FLERR, "Illegal fix nucleate command.");
     }
@@ -83,6 +89,7 @@ void FixNucleate::init() {
   // addlipid does the same thing
   // but for some reason self implements add_request
   neighbor->add_request(this, NeighConst::REQ_OCCASIONAL);
+  force_reneighbor = 1;
 }
 
 int FixNucleate::setmask() {
@@ -100,11 +107,22 @@ void FixNucleate::init_list(int /*id*/, NeighList *ptr)
 void FixNucleate::post_integrate() {
   if (update->ntimestep % nevery) return;
 
+  // figure out how many nucleation events to attempt this step
   int n_nucleate_group = 0;
   for (int i=0; i<atom->nlocal; i++) if (group->bitmask[igroup] & atom->mask[i]) n_nucleate_group++;
   int n_nucleate_local = prob * n_nucleate_group; // number of nucleation events to attempt this step
+   // if prob is small, do a random check for probability
+  if (!n_nucleate_local == 0)
+    if (random->uniform() < prob * n_nucleate_group) n_nucleate_local = 1;
+  
+  // pass through all MPI processes to find max number of nucleation events
   int max_nucleate_global;
   MPI_Allreduce(&n_nucleate_local, &max_nucleate_global, 1, MPI_INT, MPI_MAX, world);
+
+  if (max_nucleate_global == 0) {
+    if ((comm->me == 0) && (warnflag == WARN)) error->warning(FLERR,"Fix nucleate: no nucleation events this step at rate %g", prob);
+    return; // nothing to do this step
+  }
 
   // make arrays for communicating coordinates
   // already initialised to 0.0
@@ -208,7 +226,7 @@ void FixNucleate::post_integrate() {
   // now that candidates have been communicated, check for overlaps and insert
   int owned_by_proc = 0;
   int overlapflag = 0;
-  int is_mine[comm->nprocs*max_nucleate_global], n_mine=0, n_before=0;
+  int is_mine[comm->nprocs*max_nucleate_global];
   for (int icoord=0; icoord < comm->nprocs*max_nucleate_global; icoord++) {
     is_mine[icoord] = 0;
     if (!filled_coords_flags[icoord]) continue; // make sure some process wrote coords here
@@ -221,7 +239,7 @@ void FixNucleate::post_integrate() {
   }
 
   if (atom->map_style != Atom::MAP_NONE) atom->map_clear();
-  atom->nghost = 0;
+  atom->nghost = 0; // taken from bond/react and adsorb
   atom->avec->clear_bonus(); // no clue what this is for
 
   int my_insertions = 0, global_insertions = 0, nlocal_prev=atom->nlocal;
@@ -245,13 +263,18 @@ void FixNucleate::post_integrate() {
     my_insertions++;
   }
 
+  // send around how many insertions each proc made
   MPI_Scan(&my_insertions, &global_insertions, 1, MPI_INT, MPI_SUM, world);
   int n_insert_before = global_insertions - my_insertions;
+  // and use that knowledge to properly set atom tags and molecule IDs
   for (int iinsert=0; iinsert<my_insertions; iinsert++) {
     atom->tag[nlocal_prev+iinsert] = max_atomtag + n_insert_before + iinsert + 1;
     atom->molecule[nlocal_prev+iinsert] = maxmol_all + n_insert_before + iinsert + 1;
   }
+  // if (atom->tag_enable) atom->tag_extend(); // <- alternative to handling myself
+  atom->tag_check(); // if this fails, I did something wrong
 
+  // communicate total number of atoms in system to all procs
   bigint nblocal = atom->nlocal;
   MPI_Allreduce(&nblocal,&atom->natoms,1,MPI_LMP_BIGINT,MPI_SUM,world);
   if (atom->natoms < 0)
@@ -262,14 +285,9 @@ void FixNucleate::post_integrate() {
     atom->map_init();
     atom->map_set();
   }
-  
-  // if (atom->tag_enable) atom->tag_extend(); doing this myself now
-  atom->tag_check();
-  
+    
   memory->destroy(insert_coords);
   memory->destroy(filled_coords_flags);
-
-  next_reneighbor = update->ntimestep + 1; // force reneighbor next step
 }
 
 void FixNucleate::post_integrate_respa(int ilevel, int /*iloop*/)
