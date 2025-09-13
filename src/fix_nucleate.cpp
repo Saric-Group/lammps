@@ -26,6 +26,8 @@ enum { WARN, NOWARN }; // warnflag values
 
 FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg) {
   int iarg = 3;
+  force_reneighbor = 1;
+  next_reneighbor = -1;
 
   // necessary args
   nevery = utils::inumeric(FLERR, arg[iarg++], false, lmp);
@@ -64,6 +66,12 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
         error->all(FLERR, "Missing numeric parameter after insert_sigma kwarg.");
       
       insert_sigma = utils::numeric(FLERR, arg[iarg+1], false, lmp);
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"bond_type") == 0) {
+      if (iarg + 2 > narg)
+        error->all(FLERR, "Missing numeric parameter after bond_type kwarg.");
+      
+      bond_type = utils::inumeric(FLERR, arg[iarg+1], false, lmp);
       iarg += 2;
     } else if (strcmp(arg[iarg],"nowarn") == 0) {
       warnflag = NOWARN;
@@ -253,18 +261,16 @@ void FixNucleate::post_integrate() {
   int owned_by_proc = 0;
   int overlapflag = 0;
   int is_mine[comm->nprocs*max_nucleate_global];
-  double com[3];
+  int owned_by_me_left = 0, owned_by_me_right = 0;
   for (int icoord=0; icoord < comm->nprocs*max_nucleate_global; icoord++) {
     is_mine[icoord] = 0;
     if (!filled_coords_flags[icoord]) continue; // make sure some process wrote coords here
 
-    // check if this proc owns the coords to be inserted
-    com[0] = 0.5*(insert_coords[icoord][0]+insert_coords[icoord][3]);
-    com[1] = 0.5*(insert_coords[icoord][1]+insert_coords[icoord][4]);
-    com[2] = 0.5*(insert_coords[icoord][2]+insert_coords[icoord][5]);
-    check_ownership(com, owned_by_proc);
-    if (!owned_by_proc) continue;
-    
+    check_ownership(insert_coords[icoord], owned_by_me_left);
+    check_ownership(insert_coords[icoord]+3, owned_by_me_right);
+
+    if (!(owned_by_me_left && owned_by_me_right)) continue;
+
     is_mine[icoord] = 1;
   }
 
@@ -339,7 +345,7 @@ void FixNucleate::post_integrate() {
     atom->map_init();
     atom->map_set();
   }
-    
+
   memory->destroy(insert_coords);
   memory->destroy(filled_coords_flags);
 }
