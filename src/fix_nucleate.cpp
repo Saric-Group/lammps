@@ -5,7 +5,12 @@
 #include "comm.h"
 #include "domain.h"
 #include "error.h"
+#include "fix.h"
+#include "force.h"
+#include "group.h"
 #include "math_extra.h"
+#include "memory.h"
+#include "modify.h"
 #include "neighbor.h"
 #include "neigh_list.h"
 #include "random_mars.h"
@@ -58,7 +63,14 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
   random = new RanMars(lmp, seed + comm->me);
 }
 
-FixNucleate::~FixNucleate() {}
+FixNucleate::~FixNucleate() {
+  delete random;
+}
+
+void FixNucleate::post_constructor() {
+  if(!modify->get_fix_by_id("normal_tracking"))
+    Fix* fix2 = modify->add_fix("normal_tracking all property/atom d_aligned");
+}
 
 void FixNucleate::init() {
   if (utils::strmatch(update->integrate_style,"^respa"))
@@ -70,7 +82,7 @@ void FixNucleate::init() {
   // need a half neighbor list, built every Nevery steps
   // addlipid does the same thing
   // but for some reason self implements add_request
-  neighbor->add_request(this, NeighConst::REQ_OCCASIONAL);  
+  neighbor->add_request(this, NeighConst::REQ_OCCASIONAL);
 }
 
 int FixNucleate::setmask() {
@@ -80,21 +92,32 @@ int FixNucleate::setmask() {
   return mask;
 }
 
-void FixNucleate::post_integrate() {
+void FixNucleate::init_list(int /*id*/, NeighList *ptr)
+{
+  list = ptr;
+}
 
-  int n_nucleate_local = prob * atom->nlocal; // number of nucleation events to attempt this step
+void FixNucleate::post_integrate() {
+  if (update->ntimestep % nevery) return;
+
+  int n_nucleate_group = 0;
+  for (int i=0; i<atom->nlocal; i++) if (group->bitmask[igroup] & atom->mask[i]) n_nucleate_group++;
+  int n_nucleate_local = prob * n_nucleate_group; // number of nucleation events to attempt this step
   int max_nucleate_global;
   MPI_Allreduce(&n_nucleate_local, &max_nucleate_global, 1, MPI_INT, MPI_MAX, world);
 
+  // make arrays for communicating coordinates
+  // already initialised to 0.0
   memory->create(insert_coords, comm->nprocs*max_nucleate_global, 6, "fix_nucleate:insert_coords");
   memory->create(filled_coords_flags, comm->nprocs*max_nucleate_global, "fix_nucleate:filled_coords_flags");
 
   // create a set of unique random indices to nucleate at
   std::set<int> nucleate_indices;
   while (nucleate_indices.size() < n_nucleate_local) {
-    int index = static_cast<int>(random->uniform() * atom->nlocal);
+    int index = static_cast<int>(random->uniform() * n_nucleate_group);
     nucleate_indices.insert(index);
   }
+  std::set<int>::iterator nuc_iterator = nucleate_indices.begin();
 
   // not sure if necessary but both addlipid and bond/react do this
   comm->forward_comm();
@@ -114,22 +137,29 @@ void FixNucleate::post_integrate() {
   for (int i = 0; i < atom->nlocal; i++) maxmol_all = MAX(maxmol_all, atom->molecule[i]);
   MPI_Allreduce(MPI_IN_PLACE, &maxmol_all, 1, MPI_LMP_TAGINT, MPI_MAX, world);
   
-  addatoms.clear();
+  int flag,cols;
+  int index1 = atom->find_custom("aligned",flag,cols);
+  double *d_aligned = atom->dvector[index1];
 
   int n_added_local = 0;
-  for(int nucleate_index : nucleate_indices) {
-    int ilocal = ilist[nucleate_index];
-    
+  int nright_group = -1; // start at -1 for so it serves as indices
+  for(int iatom=0; iatom<nlocal; iatom++) {
+    int ilocal = ilist[iatom];
     // make sure we have an atom from target group
     if (!(group->bitmask[igroup] & atom->mask[ilocal])) continue;
-
+    nright_group++;
+    // check if we're at the right nucleation index
+    if (nright_group != *nuc_iterator) {
+      continue;
+    }
+    
     int itype = atom->type[ilocal];
     double *x = atom->x[ilocal];
 
-    double normal[3];
+    double normal[3]; 
     double rotation[3][3];
 
-    double* iquat = avec->bonus[ilocal].quat;
+    double* iquat = avec->bonus[atom->ellipsoid[ilocal]].quat;
     MathExtra::quat_to_mat_trans(iquat, rotation);
     // taken from pair_ylz.cpp
     // does this mean longest axis has to be x?
@@ -138,10 +168,17 @@ void FixNucleate::post_integrate() {
     normal[1] = rotation[0][1];
     normal[2] = rotation[0][2];
 
-    double x_insert[3];
-    x_insert[0] = x[0] + r_surf*normal[0];
-    x_insert[1] = x[1] + r_surf*normal[1];
-    x_insert[2] = x[2] + r_surf*normal[2];
+    double x_insert[3], x_starting[3];
+    x_starting[0] = x[0];
+    x_starting[1] = x[1];
+    x_starting[2] = x[2];
+    x_insert[0] = x[0] - r_surf*normal[0]; // ylz normals point out, so negative sign
+    x_insert[1] = x[1] - r_surf*normal[1];
+    x_insert[2] = x[2] - r_surf*normal[2];
+
+    double norm = sqrt(x_starting[0]*x_starting[0] + x_starting[2]*x_starting[2]);
+    d_aligned[ilocal] = x_starting[0] * normal[0] / norm + x_starting[2] * normal[2] / norm;
+    
     // apply PBC
     domain->minimum_image(x_insert[0], x_insert[1], x_insert[2]);
     insert_coords[comm->me*max_nucleate_global + n_added_local][0] = x_insert[0];
@@ -149,33 +186,40 @@ void FixNucleate::post_integrate() {
     insert_coords[comm->me*max_nucleate_global + n_added_local][2] = x_insert[2];
     filled_coords_flags[comm->me*max_nucleate_global + n_added_local] = 1;
     n_added_local++;
+    ++nuc_iterator;
+
+    if (n_added_local == n_nucleate_local) break; // break if we've added enough atoms this step
   }
 
   // communicate all inserted coords to all procs
   MPI_Allreduce(MPI_IN_PLACE, insert_coords, comm->nprocs*max_nucleate_global*6, MPI_DOUBLE, MPI_SUM, world);
   MPI_Allreduce(MPI_IN_PLACE, filled_coords_flags, comm->nprocs*max_nucleate_global, MPI_INT, MPI_SUM, world);
 
+  std::printf("Proc %d: Attempted %d nucleation events, %d successful\n", comm->me, n_nucleate_local, n_added_local);
   // now that candidates have been communicated, check for overlaps and insert
   int owned_by_proc = 0;
   int overlapflag = 0;
   for (int icoord=0; icoord < comm->nprocs*max_nucleate_global; icoord++) {
-    if (! filled_coords_flags[icoord]) continue; // make sure some process wrote coords here
+    printf("Filled coords flag[%d]: %d\n", icoord, filled_coords_flags[icoord]);
+    if (!filled_coords_flags[icoord]) continue; // make sure some process wrote coords here
 
     // check if this proc owns the coords to be inserted
     check_ownership(insert_coords[icoord], owned_by_proc);
     if (!owned_by_proc) continue;
 
+    printf("Checking overlap at: x=(%g, %g, %g)\n", insert_coords[icoord][0], insert_coords[icoord][1], insert_coords[icoord][2]);
     // check if there is an overlap with existing atoms
     check_overlap(insert_coords[icoord], overlapflag);
     if (overlapflag) continue;
 
+    atom->nghost = 0;
     atom->avec->clear_bonus(); // no clue what this is for
-
+    std::printf("Proc %d: Inserted atom %d at (%g, %g, %g)\n", comm->me, atom->tag[atom->nlocal-1], atom->x[atom->nlocal-1][0], atom->x[atom->nlocal-1][1], atom->x[atom->nlocal-1][2]);
     atom->avec->create_atom(2, insert_coords[icoord]);
     int newind = atom->nlocal - 1;
-    atom->type[newind] = 2; // TODO: make variable
-    MPI_Allreduce(MPI_IN_PLACE,&max_atomtag,1,MPI_LMP_TAGINT,MPI_MAX,world); // max tag on all procs
-    atom->tag[newind] = ++max_atomtag;
+    std::printf("Proc %d: Inserted atom %d at (%g, %g, %g)\n", comm->me, atom->tag[atom->nlocal-1], atom->x[atom->nlocal-1][0], atom->x[atom->nlocal-1][1], atom->x[atom->nlocal-1][2]);
+    if (atom->tag_enable) atom->tag_extend();
+    atom->tag_check();
     
     MPI_Allreduce(MPI_IN_PLACE, &maxmol_all, 1, MPI_LMP_TAGINT, MPI_MAX, world);
     atom->molecule[newind] = ++maxmol_all;
@@ -191,13 +235,18 @@ void FixNucleate::post_integrate() {
     atom->image[newind] = 0;
     modify->create_attribute(newind);
 
-    comm->forward_comm(); // not sure if needed
+    // comm->forward_comm(); // not sure if needed
     // reset atom->map, no idea what this does
     if (atom->map_style != Atom::MAP_NONE) {
       atom->map_init();
       atom->map_set();
     }
+    std::printf("Proc %d: Inserted atom %d at (%g, %g, %g)\n", comm->me, atom->tag[newind], atom->x[newind][0], atom->x[newind][1], atom->x[newind][2]);
+    std::printf("Atom got tag: %d and molecule ID: %d\n", atom->tag[newind], atom->molecule[newind]);
   }
+
+  memory->destroy(insert_coords);
+  memory->destroy(filled_coords_flags);
 }
 
 void FixNucleate::post_integrate_respa(int ilevel, int /*iloop*/)
@@ -208,7 +257,7 @@ void FixNucleate::post_integrate_respa(int ilevel, int /*iloop*/)
 void FixNucleate::initialise_v(double *v, const double mass) {
   // initialise velocity from Maxwell-Boltzmann distribution
   // based on Chris' bugfix of fix bond/react
-  double temperature = force->temperature; // insert at system temperature, TODO: make variable?
+  double temperature = 1.; // insert at system temperature, TODO: make variable?
   double vtnorm = sqrt( ( 12 * temperature * force->boltz ) / (mass * force->mvv2e ) );
   v[0] = vtnorm*(0.5-(random->uniform()));     // Chris 21/07/2023 added "0.5-"
   v[1] = vtnorm*(0.5-(random->uniform()));     // Chris 21/07/2023 added "0.5-"
@@ -306,25 +355,5 @@ void FixNucleate::check_ownership(double* coords, int& flag) {
       if (comm->mysplit[1][1] == 1.0 &&
           newcoord[0] >= sublo[0] && newcoord[0] < subhi[0]) flag = 1;
     }
-  }
-}
-
-void insert_atoms() {
-  check_overlap(x_insert, abortflag);
-    if (abortflag) continue;
-
-    // insert new atom
-    AddAtom newatom;
-    newatom.type = 2;
-    newatom.mask = 1 | groupbit; // default group + this fix's group
-    newatom.rmass = 1.0;
-    newatom.x[0] = x_insert[0];
-    newatom.x[1] = x_insert[1];
-    newatom.x[2] = x_insert[2];
-    initialise_v(newatom.v, newatom.rmass);
-    newatom.image = 0; // image flags are set to 0 when atom is created
-    // figure out tag when inserting
-
-    n_added_local++;
   }
 }

@@ -18,8 +18,10 @@ class FixNucleate : public Fix {
 
     int setmask() override;
     void init() override;
+    void init_list(int, class NeighList *) override;
     void post_integrate() override;
     void post_integrate_respa(int, int) override;
+    void post_constructor() override;
 
     void average_normals();
     void initialise_v(double *, const double);
@@ -39,14 +41,6 @@ class FixNucleate : public Fix {
     class RanMars *random; // random number generator
 
     class NeighList *list;
-
-    struct AddAtom {
-        tagint tag, molecule;
-        int type, mask;
-        imageint image;
-        double rmass, x[3], v[3];
-    };
-    std::vector<AddAtom> addatoms;
 
     class AtomVecEllipsoid *avec;
 };
