@@ -63,13 +63,20 @@ class LammpsGui : public QMainWindow {
     Q_OBJECT
 
     friend class CodeEditor;
+    friend class AcceleratorTab;
     friend class GeneralTab;
-    friend class Tutorial1Wizard;
-    friend class Tutorial2Wizard;
+    friend class TutorialWizard;
+    friend class Preferences;
 
 public:
     LammpsGui(QWidget *parent = nullptr, const QString &filename = QString());
     ~LammpsGui() override;
+
+    LammpsGui()                             = delete;
+    LammpsGui(const LammpsGui &)            = delete;
+    LammpsGui(LammpsGui &&)                 = delete;
+    LammpsGui &operator=(const LammpsGui &) = delete;
+    LammpsGui &operator=(LammpsGui &&)      = delete;
 
 protected:
     void open_file(const QString &filename);
@@ -77,6 +84,7 @@ protected:
     void inspect_file(const QString &filename);
     void write_file(const QString &filename);
     void update_recents(const QString &filename = "");
+    void clear_variables();
     void update_variables();
     void do_run(bool use_buffer);
     void start_lammps();
@@ -84,15 +92,10 @@ protected:
     void setDocver();
     void autoSave();
     void setFont(const QFont &newfont);
-    QWizardPage *tutorial1_intro();
-    QWizardPage *tutorial1_info();
-    QWizardPage *tutorial1_directory();
-    QWizardPage *tutorial1_finish();
-    QWizardPage *tutorial2_intro();
-    QWizardPage *tutorial2_info();
-    QWizardPage *tutorial2_directory();
-    QWizardPage *tutorial2_finish();
-    void setup_tutorial(int tutno, const QString &dir, bool purgedir, bool getsolution);
+    QWizardPage *tutorial_intro(const int ntutorial, const QString &infotext);
+    QWizardPage *tutorial_directory(const int ntutorial);
+    void setup_tutorial(int tutno, const QString &dir, bool purgedir, bool getsolution,
+                        bool openwebpage);
     void purge_inspect_list();
     bool eventFilter(QObject *watched, QEvent *event) override;
 
@@ -118,6 +121,7 @@ private slots:
     void findandreplace();
     void run_buffer() { do_run(true); }
     void run_file() { do_run(false); }
+    void restart_lammps();
 
     void edit_variables();
     void render_image();
@@ -132,6 +136,12 @@ private slots:
     void tutorial_web();
     void start_tutorial1();
     void start_tutorial2();
+    void start_tutorial3();
+    void start_tutorial4();
+    void start_tutorial5();
+    void start_tutorial6();
+    void start_tutorial7();
+    void start_tutorial8();
     void howto();
     void logupdate();
     void modified();
@@ -145,6 +155,7 @@ private:
     Highlighter *highlighter;
     StdCapture *capturer;
     QLabel *status;
+    QLabel *cpuuse;
     LogWindow *logwindow;
     ImageViewer *imagewindow;
     ChartWindow *chartwindow;
@@ -176,22 +187,20 @@ private:
     bool is_running;
     int run_counter;
     std::vector<char *> lammps_args;
+
+protected:
+    int nthreads;
 };
 
-class Tutorial1Wizard : public QWizard {
+class TutorialWizard : public QWizard {
     Q_OBJECT
 
 public:
-    Tutorial1Wizard(QWidget *parent = nullptr);
+    TutorialWizard(int ntutorial, QWidget *parent = nullptr);
     void accept() override;
-};
 
-class Tutorial2Wizard : public QWizard {
-    Q_OBJECT
-
-public:
-    Tutorial2Wizard(QWidget *parent = nullptr);
-    void accept() override;
+private:
+    int _ntutorial;
 };
 #endif // LAMMPSGUI_H
 
