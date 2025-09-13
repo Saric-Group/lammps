@@ -87,8 +87,8 @@ void FixNucleate::init() {
 
 int FixNucleate::setmask() {
   int mask = 0;
-  mask |= PRE_EXCHANGE;
-  // mask |= POST_INTEGRATE_RESPA;
+  mask |= POST_INTEGRATE;
+  mask |= POST_INTEGRATE_RESPA;
   return mask;
 }
 
@@ -97,7 +97,7 @@ void FixNucleate::init_list(int /*id*/, NeighList *ptr)
   list = ptr;
 }
 
-void FixNucleate::pre_exchange() {
+void FixNucleate::post_integrate() {
   if (update->ntimestep % nevery) return;
 
   int n_nucleate_group = 0;
@@ -188,7 +188,7 @@ void FixNucleate::pre_exchange() {
     d_aligned[ilocal] = x_starting[0] * normal[0] / norm + x_starting[2] * normal[2] / norm;
     
     // apply PBC
-    domain->minimum_image(x_insert[0], x_insert[1], x_insert[2]);
+    domain->minimum_image(FLERR, x_insert[0], x_insert[1], x_insert[2]);
     insert_coords[comm->me*max_nucleate_global + n_added_local][0] = x_insert[0];
     insert_coords[comm->me*max_nucleate_global + n_added_local][1] = x_insert[1];
     insert_coords[comm->me*max_nucleate_global + n_added_local][2] = x_insert[2];
@@ -227,14 +227,11 @@ void FixNucleate::pre_exchange() {
   int my_insertions = 0, global_insertions = 0, nlocal_prev=atom->nlocal;
   for (int icoord=0; icoord < comm->nprocs*max_nucleate_global; icoord++) {
     if (!is_mine[icoord]) continue;
-
-    std::printf("Proc %d: Checking overlap at: x=(%g, %g, %g)\n", comm->me, insert_coords[icoord][0], insert_coords[icoord][1], insert_coords[icoord][2]);
     
     // check if there is an overlap with existing atoms
     check_overlap(insert_coords[icoord], overlapflag);
     if (overlapflag) continue;
     
-    // std::printf("Proc %d: Inserted atom %d at (%g, %g, %g)\n", comm->me, atom->tag[atom->nlocal-1], atom->x[atom->nlocal-1][0], atom->x[atom->nlocal-1][1], atom->x[atom->nlocal-1][2]);
     atom->avec->create_atom(2, insert_coords[icoord]);
     int newind = atom->nlocal - 1;
     
@@ -331,7 +328,7 @@ void FixNucleate::check_overlap(double* coords, int& abortflag) {
       delx = coords[0] - atom->x[i][0];
       dely = coords[1] - atom->x[i][1];
       delz = coords[2] - atom->x[i][2];
-      domain->minimum_image(delx,dely,delz);
+      domain->minimum_image(FLERR, delx,dely,delz);
       rsq = delx*delx + dely*dely + delz*delz;
       if (rsq < overlapsq) {
         abortflag = 1;
