@@ -36,6 +36,7 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
   r_surf = 1.0;
   overlap = 0; overlapsq=0;
   warnflag = WARN;
+  insert_sigma = 1.0;
 
   // parse kwargs
   while (iarg < narg) {
@@ -57,6 +58,12 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
             
       overlap = utils::numeric(FLERR, arg[iarg+1], false, lmp);
       overlapsq = overlap*overlap;
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"insert_sigma") == 0) {
+      if (iarg + 2 > narg)
+        error->all(FLERR, "Missing numeric parameter after insert_sigma kwarg.");
+      
+      insert_sigma = utils::numeric(FLERR, arg[iarg+1], false, lmp);
       iarg += 2;
     } else if (strcmp(arg[iarg],"nowarn") == 0) {
       warnflag = NOWARN;
@@ -105,6 +112,9 @@ void FixNucleate::init_list(int /*id*/, NeighList *ptr)
 }
 
 void FixNucleate::post_integrate() {
+  // TODO: initialise a lot of variables here outside of loops
+  // TODO: remove alignment atom/property
+  // TODO: ownership check is done for COM of created atoms, there could be issues when crossing domains
   if (update->ntimestep % nevery) return;
 
   // figure out how many nucleation events to attempt this step
@@ -112,7 +122,7 @@ void FixNucleate::post_integrate() {
   for (int i=0; i<atom->nlocal; i++) if (group->bitmask[igroup] & atom->mask[i]) n_nucleate_group++;
   int n_nucleate_local = prob * n_nucleate_group; // number of nucleation events to attempt this step
    // if prob is small, do a random check for probability
-  if (!n_nucleate_local == 0)
+  if (n_nucleate_local == 0)
     if (random->uniform() < prob * n_nucleate_group) n_nucleate_local = 1;
   
   // pass through all MPI processes to find max number of nucleation events
@@ -194,22 +204,38 @@ void FixNucleate::post_integrate() {
     normal[1] = rotation[0][1];
     normal[2] = rotation[0][2];
 
-    double x_insert[3], x_starting[3];
+    double x_insert[3], x_starting[3], orientation_vec[3];
     x_starting[0] = x[0];
     x_starting[1] = x[1];
     x_starting[2] = x[2];
     x_insert[0] = x[0] - r_surf*normal[0]; // ylz normals point out, so negative sign
     x_insert[1] = x[1] - r_surf*normal[1];
     x_insert[2] = x[2] - r_surf*normal[2];
+    random_orientation_on_plane(normal, orientation_vec);
+
+    // shift dimer so center of mass is at equilibrium distance from surface
+    x_insert[0] -= 0.5*insert_sigma*orientation_vec[0];
+    x_insert[1] -= 0.5*insert_sigma*orientation_vec[1];
+    x_insert[2] -= 0.5*insert_sigma*orientation_vec[2];
+    x_insert[3] = x_insert[0] + insert_sigma*orientation_vec[0];
+    x_insert[4] = x_insert[1] + insert_sigma*orientation_vec[1];
+    x_insert[5] = x_insert[2] + insert_sigma*orientation_vec[2];
 
     double norm = sqrt(x_starting[0]*x_starting[0] + x_starting[2]*x_starting[2]);
     d_aligned[ilocal] = x_starting[0] * normal[0] / norm + x_starting[2] * normal[2] / norm;
     
     // apply PBC
     domain->minimum_image(FLERR, x_insert[0], x_insert[1], x_insert[2]);
+    domain->minimum_image(FLERR, x_insert[3], x_insert[4], x_insert[5]);
+
+    // add to global vector of candidate coords
     insert_coords[comm->me*max_nucleate_global + n_added_local][0] = x_insert[0];
     insert_coords[comm->me*max_nucleate_global + n_added_local][1] = x_insert[1];
     insert_coords[comm->me*max_nucleate_global + n_added_local][2] = x_insert[2];
+    insert_coords[comm->me*max_nucleate_global + n_added_local][3] = x_insert[3];
+    insert_coords[comm->me*max_nucleate_global + n_added_local][4] = x_insert[4];
+    insert_coords[comm->me*max_nucleate_global + n_added_local][5] = x_insert[5];
+
     filled_coords_flags[comm->me*max_nucleate_global + n_added_local] = 1;
     n_added_local++;
     ++nuc_iterator;
@@ -227,12 +253,16 @@ void FixNucleate::post_integrate() {
   int owned_by_proc = 0;
   int overlapflag = 0;
   int is_mine[comm->nprocs*max_nucleate_global];
+  double com[3];
   for (int icoord=0; icoord < comm->nprocs*max_nucleate_global; icoord++) {
     is_mine[icoord] = 0;
     if (!filled_coords_flags[icoord]) continue; // make sure some process wrote coords here
 
     // check if this proc owns the coords to be inserted
-    check_ownership(insert_coords[icoord], owned_by_proc);
+    com[0] = 0.5*(insert_coords[icoord][0]+insert_coords[icoord][3]);
+    com[1] = 0.5*(insert_coords[icoord][1]+insert_coords[icoord][4]);
+    com[2] = 0.5*(insert_coords[icoord][2]+insert_coords[icoord][5]);
+    check_ownership(com, owned_by_proc);
     if (!owned_by_proc) continue;
     
     is_mine[icoord] = 1;
@@ -247,30 +277,54 @@ void FixNucleate::post_integrate() {
     if (!is_mine[icoord]) continue;
     
     // check if there is an overlap with existing atoms
+    overlapflag = 0;
     check_overlap(insert_coords[icoord], overlapflag);
+    check_overlap(insert_coords[icoord]+3, overlapflag);
     if (overlapflag) continue;
     
     atom->avec->create_atom(2, insert_coords[icoord]);
-    int newind = atom->nlocal - 1;
-    
-    initialise_v(atom->v[newind], atom->rmass[newind]);
+    atom->avec->create_atom(3, insert_coords[icoord]+3);
 
-    atom->mask[newind] = 1 | groupbit;
-    atom->image[newind] = ((imageint) IMGMAX << IMG2BITS) |
-        ((imageint) IMGMAX << IMGBITS) | IMGMAX;
-    modify->create_attribute(newind);
+    for (int newind=atom->nlocal-2; newind<atom->nlocal; newind++) {
+      initialise_v(atom->v[newind], atom->rmass[newind]);
+      atom->mask[newind] = 1 | groupbit;
+      atom->image[newind] = ((imageint) IMGMAX << IMG2BITS) |
+          ((imageint) IMGMAX << IMGBITS) | IMGMAX;
+      modify->create_attribute(newind);
+    }
 
     my_insertions++;
   }
 
   // send around how many insertions each proc made
   MPI_Scan(&my_insertions, &global_insertions, 1, MPI_INT, MPI_SUM, world);
-  int n_insert_before = global_insertions - my_insertions;
+  int n_insert_before = global_insertions - my_insertions, n_bonds = atom->num_bond[0]; // TODO: should be num_bond[itype]?
   // and use that knowledge to properly set atom tags and molecule IDs
   for (int iinsert=0; iinsert<my_insertions; iinsert++) {
-    atom->tag[nlocal_prev+iinsert] = max_atomtag + n_insert_before + iinsert + 1;
-    atom->molecule[nlocal_prev+iinsert] = maxmol_all + n_insert_before + iinsert + 1;
+    // tags
+    atom->tag[nlocal_prev+2*iinsert] = max_atomtag + (2 * n_insert_before) + 2 * iinsert + 1;
+    atom->tag[nlocal_prev+(2*iinsert)+1] = max_atomtag + (2 * n_insert_before) + 2 * iinsert + 2;
+    atom->molecule[nlocal_prev+2*iinsert] = maxmol_all + n_insert_before + iinsert + 1;
+    atom->molecule[nlocal_prev+(2*iinsert)+1] = maxmol_all + n_insert_before + iinsert + 1;
+
+    // now add bonds, as taken from create_bonds.cpp
+    atom->bond_type[nlocal_prev+2*iinsert][0] = 1; // TODO: should be a variable bond type
+    atom->bond_atom[nlocal_prev+2*iinsert][0] = atom->tag[nlocal_prev+(2*iinsert)+1];
+    atom->num_bond[nlocal_prev+2*iinsert] = 1;
+    if (!force->newton_bond) {
+      atom->bond_type[nlocal_prev+(2*iinsert)+1][0] = 1;
+      atom->bond_atom[nlocal_prev+(2*iinsert)+1][0] = atom->tag[nlocal_prev+2*iinsert];
+      atom->num_bond[nlocal_prev+(2*iinsert)+1] = 1;
+    }
   }
+
+  // also all taken from create_bonds.cpp
+  bigint nbonds = 0;
+  for (int i = 0; i < nlocal; i++) nbonds += atom->num_bond[i];
+  MPI_Allreduce(MPI_IN_PLACE,&nbonds,1,MPI_LMP_BIGINT,MPI_SUM,world);
+
+  if (!force->newton_bond) atom->nbonds /= 2;
+
   // if (atom->tag_enable) atom->tag_extend(); // <- alternative to handling myself
   atom->tag_check(); // if this fails, I did something wrong
 
@@ -338,9 +392,8 @@ void FixNucleate::average_normals() {
   }
 }
 
-void FixNucleate::check_overlap(double* coords, int& abortflag) {
+void FixNucleate::check_overlap(double* coords, int& overlapflag) {
   double delx, dely, delz, rsq;
-  abortflag = 0;
   if (overlapsq > 0) {
     for (int i = 0; i < atom->nlocal; i++) {
       delx = coords[0] - atom->x[i][0];
@@ -349,7 +402,7 @@ void FixNucleate::check_overlap(double* coords, int& abortflag) {
       domain->minimum_image(FLERR, delx,dely,delz);
       rsq = delx*delx + dely*dely + delz*delz;
       if (rsq < overlapsq) {
-        abortflag = 1;
+        overlapflag = 1;
         return;
       }
     }
@@ -397,4 +450,32 @@ void FixNucleate::check_ownership(double* coords, int& flag) {
           newcoord[0] >= sublo[0] && newcoord[0] < subhi[0]) flag = 1;
     }
   }
+}
+
+void FixNucleate::random_orientation_on_plane(double* normal_vec, double *out_vec)
+{
+  // TODO: this function allocates a lot of memory, optimise to use preallocated variables
+  double phi = 2*M_PI*random->uniform(); // random angle on cylinder
+
+  // normalise normal vector just in case
+  double norm = 1./sqrt(normal_vec[0]*normal_vec[0] + normal_vec[1]*normal_vec[1] + normal_vec[2]*normal_vec[2]);
+  for(uint i=0;i<3;i++) normal_vec[i] *= norm;
+
+  // make a trial vector in y direction to rotate
+  double* buff_vec = new double[3];
+  buff_vec[0] = 0;
+  buff_vec[1] = 1;
+  buff_vec[2] = 0;
+
+  // now use shortened version of Rodrigues' rotation formula (https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula)
+  // compute (v cos(phi)) + (k x v sin(phi))
+  out_vec[0] = buff_vec[0] * cos(phi) + (normal_vec[1] * buff_vec[2] - normal_vec[2] * buff_vec[1]) * sin(phi);
+  out_vec[1] = buff_vec[1] * cos(phi) + (normal_vec[2] * buff_vec[0] - normal_vec[0] * buff_vec[2]) * sin(phi);
+  out_vec[2] = buff_vec[2] * cos(phi) + (normal_vec[0] * buff_vec[1] - normal_vec[1] * buff_vec[0]) * sin(phi);
+  
+  // technically this shouldn't be necessary since both vectors are unit vectors
+  norm = 1./sqrt(out_vec[0]*out_vec[0] + out_vec[1]*out_vec[1] + out_vec[2]*out_vec[2]);
+  for(uint i=0;i<3;i++) out_vec[i] *= norm;
+  
+  delete [] buff_vec;
 }
