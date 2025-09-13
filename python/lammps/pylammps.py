@@ -27,8 +27,8 @@ import sys
 import tempfile
 from collections import namedtuple
 
-from .core import lammps
-from .constants import *                # lgtm [py/polluting-import]
+from lammps.core import lammps
+from lammps.constants import LMP_VAR_EQUAL, LMP_VAR_ATOM, LMP_VAR_VECTOR, LMP_VAR_STRING
 
 # -------------------------------------------------------------------------
 
@@ -130,11 +130,11 @@ class AtomList(object):
     :rtype: Atom or Atom2D
     """
     if index not in self._loaded:
-        if self.dimensions == 2:
-            atom = Atom2D(self._pylmp, index)
-        else:
-            atom = Atom(self._pylmp, index)
-        self._loaded[index] = atom
+      if self.dimensions == 2:
+        atom = Atom2D(self._pylmp, index)
+      else:
+        atom = Atom(self._pylmp, index)
+      self._loaded[index] = atom
     return self._loaded[index]
 
   def __len__(self):
@@ -428,6 +428,8 @@ class PyLammps(object):
   lower-level interface. The original interface can still be accessed via
   :py:attr:`PyLammps.lmp`.
 
+  .. deprecated:: TBA
+
   :param name: "machine" name of the shared LAMMPS library ("mpi" loads ``liblammps_mpi.so``, "" loads ``liblammps.so``)
   :type  name: string
   :param cmdargs: list of command line arguments to be passed to the :cpp:func:`lammps_open` function.  The executable name is automatically added.
@@ -468,6 +470,12 @@ class PyLammps(object):
     self.comm_nprocs = self.lmp.extract_setting("world_size")
     self.comm_me = self.lmp.extract_setting("world_rank")
     if self.comm_me == 0:
+      print("\nWARNING-WARNING-WARNING-WARNING-WARNING-WARNING-WARNING-WARNING-WARNING-WARNING")
+      print("WARNING:")
+      print("WARNING:   The PyLammps class is obsolete and will be removed from LAMMPS soon.")
+      print("WARNING:   Please use the lammps Python class instead.")
+      print("WARNING:")
+      print("WARNING-WARNING-WARNING-WARNING-WARNING-WARNING-WARNING-WARNING-WARNING-WARNING\n")
       print("LAMMPS output is captured by PyLammps wrapper")
       if self.comm_nprocs > 1:
         print("WARNING: Using PyLammps with multiple MPI ranks is experimental. Not all functionality is supported.")
@@ -1007,3 +1015,8 @@ class IPyLammps(PyLammps):
     """
     from IPython.display import HTML
     return HTML("<video controls><source src=\"" + filename + "\"></video>")
+
+# Local Variables:
+# fill-column: 100
+# python-indent-offset: 2
+# End:

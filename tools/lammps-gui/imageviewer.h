@@ -36,6 +36,13 @@ class ImageViewer : public QDialog {
 public:
     explicit ImageViewer(const QString &fileName, LammpsWrapper *_lammps,
                          QWidget *parent = nullptr);
+    ~ImageViewer() override = default;
+
+    ImageViewer()                               = delete;
+    ImageViewer(const ImageViewer &)            = delete;
+    ImageViewer(ImageViewer &&)                 = delete;
+    ImageViewer &operator=(const ImageViewer &) = delete;
+    ImageViewer &operator=(ImageViewer &&)      = delete;
 
 private slots:
     void saveAs();
@@ -60,6 +67,7 @@ private slots:
     void do_recenter();
     void cmd_to_clipboard();
     void change_group(int);
+    void change_molecule(int);
 
 public:
     void createImage();
@@ -89,6 +97,7 @@ private:
 
     LammpsWrapper *lammps;
     QString group;
+    QString molecule;
     QString filename;
     QString last_dump_cmd;
     int xsize, ysize;

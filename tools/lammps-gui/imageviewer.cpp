@@ -13,6 +13,7 @@
 
 #include "imageviewer.h"
 
+#include "helpers.h"
 #include "lammpsgui.h"
 #include "lammpswrapper.h"
 
@@ -46,11 +47,13 @@
 #include <QVBoxLayout>
 #include <QVariant>
 
+#include <algorithm>
 #include <cmath>
 
 // clang-format off
 /* periodic table of elements for translation of ordinal to atom type */
-static const char *pte_label[] = {
+namespace {
+    const char * const pte_label[] = {
     "X",  "H",  "He", "Li", "Be", "B",  "C",  "N",  "O",  "F",  "Ne",
     "Na", "Mg", "Al", "Si", "P" , "S",  "Cl", "Ar", "K",  "Ca", "Sc",
     "Ti", "V",  "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga", "Ge",
@@ -63,10 +66,10 @@ static const char *pte_label[] = {
     "Es", "Fm", "Md", "No", "Lr", "Rf", "Db", "Sg", "Bh", "Hs", "Mt",
     "Ds", "Rg"
 };
-static constexpr int nr_pte_entries = sizeof(pte_label) / sizeof(char *);
+constexpr int nr_pte_entries = sizeof(pte_label) / sizeof(char *);
 
 /* corresponding table of masses. */
-static constexpr double pte_mass[] = {
+constexpr double pte_mass[] = {
     /* X  */ 0.00000, 1.00794, 4.00260, 6.941, 9.012182, 10.811,
     /* C  */ 12.0107, 14.0067, 15.9994, 18.9984032, 20.1797,
     /* Na */ 22.989770, 24.3050, 26.981538, 28.0855, 30.973761,
@@ -98,7 +101,7 @@ static constexpr double pte_mass[] = {
  * The radii for Ions (Na, K, Cl, Ca, Mg, and Cs are based on the CHARMM27
  * Rmin/2 parameters for (SOD, POT, CLA, CAL, MG, CES) by default.
  */
-static constexpr double pte_vdw_radius[] = {
+constexpr double pte_vdw_radius[] = {
     /* X  */ 1.5, 1.2, 1.4, 1.82, 2.0, 2.0,
     /* C  */ 1.7, 1.55, 1.52, 1.47, 1.54,
     /* Na */ 1.36, 1.18, 2.0, 2.1, 1.8,
@@ -122,7 +125,7 @@ static constexpr double pte_vdw_radius[] = {
 
 // clang-format on
 
-static int get_pte_from_mass(double mass)
+int get_pte_from_mass(double mass)
 {
     int idx = 0;
     for (int i = 0; i < nr_pte_entries; ++i)
@@ -133,14 +136,15 @@ static int get_pte_from_mass(double mass)
     return idx;
 }
 
-static const QString blank(" ");
+const QString blank(" ");
+} // namespace
 
 ImageViewer::ImageViewer(const QString &fileName, LammpsWrapper *_lammps, QWidget *parent) :
     QDialog(parent), menuBar(new QMenuBar), imageLabel(new QLabel), scrollArea(new QScrollArea),
     buttonBox(nullptr), scaleFactor(1.0), atomSize(1.0), saveAsAct(nullptr), copyAct(nullptr),
     cmdAct(nullptr), zoomInAct(nullptr), zoomOutAct(nullptr), normalSizeAct(nullptr),
-    lammps(_lammps), group("all"), filename(fileName), useelements(false), usediameter(false),
-    usesigma(false)
+    lammps(_lammps), group("all"), molecule("none"), filename(fileName), useelements(false),
+    usediameter(false), usesigma(false)
 {
     imageLabel->setBackgroundRole(QPalette::Base);
     imageLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
@@ -239,17 +243,28 @@ ImageViewer::ImageViewer(const QString &fileName, LammpsWrapper *_lammps, QWidge
     recenter->setToolTip("Recenter on group");
     auto *reset = new QPushButton(QIcon(":/icons/gtk-zoom-fit.png"), "");
     reset->setToolTip("Reset view to defaults");
-    auto *combo = new QComboBox;
-    combo->setObjectName("group");
-    combo->setToolTip("Select group to display");
-    combo->setObjectName("group");
-    int ngroup           = lammps->id_count("group");
+
     constexpr int BUFLEN = 256;
     char gname[BUFLEN];
+    auto *combo = new QComboBox;
+    combo->setToolTip("Select group to display");
+    combo->setObjectName("group");
+    int ngroup = lammps->id_count("group");
     for (int i = 0; i < ngroup; ++i) {
         memset(gname, 0, BUFLEN);
         lammps->id_name("group", i, gname, BUFLEN);
         combo->addItem(gname);
+    }
+
+    auto *molbox = new QComboBox;
+    molbox->setToolTip("Select molecule to display");
+    molbox->setObjectName("molecule");
+    molbox->addItem("none");
+    int nmols = lammps->id_count("molecule");
+    for (int i = 0; i < nmols; ++i) {
+        memset(gname, 0, BUFLEN);
+        lammps->id_name("molecule", i, gname, BUFLEN);
+        molbox->addItem(gname);
     }
 
     auto *menuLayout   = new QHBoxLayout;
@@ -272,6 +287,8 @@ ImageViewer::ImageViewer(const QString &fileName, LammpsWrapper *_lammps, QWidge
     menuLayout->addWidget(dummy1);
     menuLayout->addWidget(new QLabel(" Group: "));
     menuLayout->addWidget(combo);
+    menuLayout->addWidget(new QLabel(" Molecule: "));
+    menuLayout->addWidget(molbox);
     buttonLayout->addWidget(dummy2);
     buttonLayout->addWidget(dossao);
     buttonLayout->addWidget(doanti);
@@ -304,6 +321,7 @@ ImageViewer::ImageViewer(const QString &fileName, LammpsWrapper *_lammps, QWidge
     connect(recenter, &QPushButton::released, this, &ImageViewer::do_recenter);
     connect(reset, &QPushButton::released, this, &ImageViewer::reset_view);
     connect(combo, SIGNAL(currentIndexChanged(int)), this, SLOT(change_group(int)));
+    connect(molbox, SIGNAL(currentIndexChanged(int)), this, SLOT(change_molecule(int)));
 
     mainLayout->addLayout(topLayout);
     mainLayout->addWidget(scrollArea);
@@ -447,14 +465,14 @@ void ImageViewer::toggle_axes()
 void ImageViewer::do_zoom_in()
 {
     zoom = zoom * 1.1;
-    if (zoom > 5.0) zoom = 5.0;
+    zoom = std::min(zoom, 5.0);
     createImage();
 }
 
 void ImageViewer::do_zoom_out()
 {
     zoom = zoom / 1.1;
-    if (zoom < 0.5) zoom = 0.5;
+    zoom = std::max(zoom, 0.5);
     createImage();
 }
 
@@ -493,10 +511,11 @@ void ImageViewer::do_recenter()
                                "variable LAMMPSGUI_CZ delete\n"
                                "variable LAMMPSGUI_CX equal (xcm(%1,x)-xlo)/lx\n"
                                "variable LAMMPSGUI_CY equal (xcm(%1,y)-ylo)/ly\n"
-                               "variable LAMMPSGUI_CZ equal (xcm(%1,z)-zlo)/lz\n").arg(group);
-    lammps->commands_string(commands.toLocal8Bit());
+                               "variable LAMMPSGUI_CZ equal (xcm(%1,z)-zlo)/lz\n")
+                           .arg(group);
+    lammps->commands_string(commands);
     xcenter = lammps->extract_variable("LAMMPSGUI_CX");
-    ycenter = lammps->extract_variable("LAMMPSGUI_CZ");
+    ycenter = lammps->extract_variable("LAMMPSGUI_CY");
     zcenter = lammps->extract_variable("LAMMPSGUI_CZ");
     lammps->commands_string("variable LAMMPSGUI_CX delete\n"
                             "variable LAMMPSGUI_CY delete\n"
@@ -506,38 +525,98 @@ void ImageViewer::do_recenter()
 
 void ImageViewer::cmd_to_clipboard()
 {
-    auto words    = last_dump_cmd.split(" ");
-    QString blank = QStringLiteral(" ");
-    int modidx    = words.indexOf("modify");
-    int maxidx    = words.size();
+    auto words = split_line(last_dump_cmd.toStdString());
+    int modidx = 0;
+    int maxidx = words.size();
+    for (int i = 0; i < maxidx; ++i) {
+        if (words[i] == "modify") {
+            modidx = i;
+            break;
+        }
+    }
 
-    QString dumpcmd = "dump viz ";
-    dumpcmd += words[1] + " image 100 myimage-*.ppm";
+    std::string dumpcmd = "dump viz ";
+    dumpcmd += words[1];
+    dumpcmd += " image 100 myimage-*.ppm";
     for (int i = 4; i < modidx; ++i)
-        if (words[i] != "noinit") dumpcmd += blank + words[i];
+        if (words[i] != "noinit") dumpcmd += " " + words[i];
     dumpcmd += '\n';
 
     dumpcmd += "dump_modify viz pad 9";
     for (int i = modidx + 1; i < maxidx; ++i)
-        dumpcmd += blank + words[i];
+        dumpcmd += " " + words[i];
     dumpcmd += '\n';
 #if QT_CONFIG(clipboard)
-    QGuiApplication::clipboard()->setText(dumpcmd);
+    QGuiApplication::clipboard()->setText(dumpcmd.c_str());
+#else
+    fprintf(stderr, "# customized dump image command:\n%s", dumpcmd.c_str())
 #endif
 }
 
 void ImageViewer::change_group(int)
 {
     auto *box = findChild<QComboBox *>("group");
-    if (box) group = box->currentText();
+    group     = box ? box->currentText() : "all";
+
+    // reset molecule to "none" when changing group
+    box = findChild<QComboBox *>("molecule");
+    if (box && (box->currentIndex() > 0)) {
+        box->setCurrentIndex(0); // triggers call to createImage()
+    } else {
+        createImage();
+    }
+}
+
+void ImageViewer::change_molecule(int)
+{
+    auto *box = findChild<QComboBox *>("molecule");
+    molecule  = box ? box->currentText() : "none";
+
+    box = findChild<QComboBox *>("group");
+    if (molecule == "none") {
+        box->setEnabled(true);
+    } else {
+        box->setEnabled(false);
+    }
+
     createImage();
 }
+
+// This function creates a visualization of the current system using the
+// "dump image" command and reads and displays the renderd image.
+// To visualize molecules we create new atoms with create_atoms and
+// put them into a new, temporary group and then visualize that group.
+// After rendering the image, the atoms and group are deleted.
+// to update bond data, we also need to issue a "run 0" command.
 
 void ImageViewer::createImage()
 {
     auto *renderstatus = findChild<QLabel *>("renderstatus");
     if (renderstatus) renderstatus->setEnabled(true);
     repaint();
+
+    QString oldgroup = group;
+
+    if (molecule != "none") {
+
+        // get center of box
+        double *boxlo, *boxhi, xmid, ymid, zmid;
+        boxlo = (double *)lammps->extract_global("boxlo");
+        boxhi = (double *)lammps->extract_global("boxhi");
+        if (boxlo && boxhi) {
+            xmid = 0.5 * (boxhi[0] + boxlo[0]);
+            ymid = 0.5 * (boxhi[1] + boxlo[1]);
+            zmid = 0.5 * (boxhi[2] + boxlo[2]);
+        } else {
+            xmid = ymid = zmid = 0.0;
+        }
+
+        QString molcreate = "create_atoms 0 single %1 %2 %3 mol %4 312944 group %5 units box";
+        group             = "imgviewer_tmp_mol";
+        lammps->command(molcreate.arg(xmid).arg(ymid).arg(zmid).arg(molecule).arg(group));
+        lammps->command(QString("neigh_modify exclude group all %1").arg(group));
+        lammps->command("run 0 post no");
+    }
 
     QSettings settings;
     QString dumpcmd = QString("write_dump ") + group + " image ";
@@ -570,7 +649,7 @@ void ImageViewer::createImage()
     usesigma               = false;
     const char *pair_style = (const char *)lammps->extract_global("pair_style");
     if (!useelements && !usediameter && pair_style && (strncmp(pair_style, "lj/", 3) == 0)) {
-        double **sigma = (double **)lammps->extract_pair("sigma");
+        auto **sigma = (double **)lammps->extract_pair("sigma");
         if (sigma) {
             usesigma = true;
             for (int i = 1; i <= ntypes; ++i) {
@@ -610,7 +689,7 @@ void ImageViewer::createImage()
                 edit->setEnabled(true);
                 edit->show();
                 // initialize with lattice spacing
-                auto *xlattice = (const double *)lammps->extract_global("xlattice");
+                const auto *xlattice = (const double *)lammps->extract_global("xlattice");
                 if (xlattice) atomSize = *xlattice;
                 edit->setText(QString::number(atomSize));
             }
@@ -667,7 +746,7 @@ void ImageViewer::createImage()
     settings.endGroup();
 
     last_dump_cmd = dumpcmd;
-    lammps->command(dumpcmd.toLocal8Bit());
+    lammps->command(dumpcmd);
 
     QImageReader reader(dumpfile.fileName());
     reader.setAutoTransform(true);
@@ -683,6 +762,13 @@ void ImageViewer::createImage()
     imageLabel->adjustSize();
     if (renderstatus) renderstatus->setEnabled(false);
     repaint();
+
+    if (molecule != "none") {
+        lammps->command("neigh_modify exclude none");
+        lammps->command(QString("delete_atoms group %1 compress no").arg(group));
+        lammps->command(QString("group %1 delete").arg(group));
+        group = oldgroup;
+    }
 }
 
 void ImageViewer::saveAs()
@@ -696,9 +782,7 @@ void ImageViewer::copy() {}
 
 void ImageViewer::quit()
 {
-    LammpsGui *main = nullptr;
-    for (QWidget *widget : QApplication::topLevelWidgets())
-        if (widget->objectName() == "LammpsGui") main = dynamic_cast<LammpsGui *>(widget);
+    auto *main = dynamic_cast<LammpsGui *>(get_main_widget());
     if (main) main->quit();
 }
 
@@ -753,7 +837,7 @@ void ImageViewer::scaleImage(double factor)
 void ImageViewer::adjustScrollBar(QScrollBar *scrollBar, double factor)
 {
     scrollBar->setValue(
-        int(factor * scrollBar->value() + ((factor - 1) * scrollBar->pageStep() / 2)));
+        int((factor * scrollBar->value()) + ((factor - 1) * scrollBar->pageStep() / 2)));
 }
 
 // Local Variables:
