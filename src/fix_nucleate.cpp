@@ -76,6 +76,12 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
     } else if (strcmp(arg[iarg],"nowarn") == 0) {
       warnflag = NOWARN;
       iarg += 1;
+    } else if (strcmp(arg[iarg], "noffset") == 0) {
+      if (iarg + 2 > narg)
+        error->all(FLERR, "Missing numeric parameter after offset kwarg.");
+
+      noffset = utils::inumeric(FLERR, arg[iarg+1], false, lmp);
+      iarg += 2;
     } else {
       error->all(FLERR, "Illegal fix nucleate command.");
     }
@@ -123,7 +129,7 @@ void FixNucleate::post_integrate() {
   // TODO: initialise a lot of variables here outside of loops
   // TODO: remove alignment atom/property
   // TODO: ownership check is done for COM of created atoms, there could be issues when crossing domains
-  if (update->ntimestep % nevery) return;
+  if ((update->ntimestep-noffset) % nevery) return;
 
   // figure out how many nucleation events to attempt this step
   int n_nucleate_group = 0;

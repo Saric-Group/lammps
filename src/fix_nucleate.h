@@ -38,6 +38,7 @@ class FixNucleate : public Fix {
     double overlap, overlapsq; // minimum distance from existing atoms
     double insert_sigma; // bond length of inserted dimer
     int bond_type; // bond type of inserted dimer
+    int noffset; // run at timestep + noffset for nucleation check
 
     double** insert_coords; // store coords of inserted atoms to check overlap
     int* filled_coords_flags; // flags to indicate which insert_coords are filled
