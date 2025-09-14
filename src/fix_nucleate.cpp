@@ -194,68 +194,70 @@ void FixNucleate::post_integrate() {
   int n_added_local = 0;
   int nright_group = -1; // start at -1 for so it serves as indices
 
-  for(int iatom=0; iatom<nlocal; iatom++) {
-    int ilocal = ilist[iatom];
-    // make sure we have an atom from target group
-    if (!(group->bitmask[igroup] & atom->mask[ilocal])) continue;
-    nright_group++;
-    // check if we're at the right nucleation index
-    if (nright_group != *nuc_iterator) {
-      continue;
+  if (nucleate_indices.size()) { // only go into loop if we have something to nucleate
+    for(int iatom=0; iatom<nlocal; iatom++) {
+      int ilocal = ilist[iatom];
+      // make sure we have an atom from target group
+      if (!(group->bitmask[igroup] & atom->mask[ilocal])) continue;
+      nright_group++;
+      // check if we're at the right nucleation index
+      if (nright_group != *nuc_iterator) {
+        continue;
+      }
+      
+      int itype = atom->type[ilocal];
+      double *x = atom->x[ilocal];
+
+      double normal[3]; 
+      double rotation[3][3];
+
+      double* iquat = avec->bonus[atom->ellipsoid[ilocal]].quat;
+      MathExtra::quat_to_mat_trans(iquat, rotation);
+      // taken from pair_ylz.cpp
+      // does this mean longest axis has to be x?
+      // or are the ellipsoid axis sorted by length?
+      normal[0] = rotation[0][0];
+      normal[1] = rotation[0][1];
+      normal[2] = rotation[0][2];
+
+      double x_insert[6], x_starting[3], orientation_vec[3];
+      x_starting[0] = x[0];
+      x_starting[1] = x[1];
+      x_starting[2] = x[2];
+      x_insert[0] = x[0] - r_surf*normal[0]; // ylz normals point out, so negative sign
+      x_insert[1] = x[1] - r_surf*normal[1];
+      x_insert[2] = x[2] - r_surf*normal[2];
+      random_orientation_on_plane(normal, orientation_vec);
+
+      // shift dimer so center of mass is at equilibrium distance from surface
+      x_insert[0] -= 0.5*insert_sigma*orientation_vec[0];
+      x_insert[1] -= 0.5*insert_sigma*orientation_vec[1];
+      x_insert[2] -= 0.5*insert_sigma*orientation_vec[2];
+      x_insert[3] = x_insert[0] + insert_sigma*orientation_vec[0];
+      x_insert[4] = x_insert[1] + insert_sigma*orientation_vec[1];
+      x_insert[5] = x_insert[2] + insert_sigma*orientation_vec[2];
+
+      double norm = sqrt(x_starting[0]*x_starting[0] + x_starting[2]*x_starting[2]);
+      d_aligned[ilocal] = x_starting[0] * normal[0] / norm + x_starting[2] * normal[2] / norm;
+      
+      // apply PBC
+      domain->minimum_image(FLERR, x_insert[0], x_insert[1], x_insert[2]);
+      domain->minimum_image(FLERR, x_insert[3], x_insert[4], x_insert[5]);
+
+      // add to global vector of candidate coords
+      insert_coords[comm->me*max_nucleate_global + n_added_local][0] = x_insert[0];
+      insert_coords[comm->me*max_nucleate_global + n_added_local][1] = x_insert[1];
+      insert_coords[comm->me*max_nucleate_global + n_added_local][2] = x_insert[2];
+      insert_coords[comm->me*max_nucleate_global + n_added_local][3] = x_insert[3];
+      insert_coords[comm->me*max_nucleate_global + n_added_local][4] = x_insert[4];
+      insert_coords[comm->me*max_nucleate_global + n_added_local][5] = x_insert[5];
+
+      filled_coords_flags[comm->me*max_nucleate_global + n_added_local] = 1;
+      n_added_local++;
+      ++nuc_iterator;
+
+      if (n_added_local == n_nucleate_local) break; // break if we've added enough atoms this step
     }
-    
-    int itype = atom->type[ilocal];
-    double *x = atom->x[ilocal];
-
-    double normal[3]; 
-    double rotation[3][3];
-
-    double* iquat = avec->bonus[atom->ellipsoid[ilocal]].quat;
-    MathExtra::quat_to_mat_trans(iquat, rotation);
-    // taken from pair_ylz.cpp
-    // does this mean longest axis has to be x?
-    // or are the ellipsoid axis sorted by length?
-    normal[0] = rotation[0][0];
-    normal[1] = rotation[0][1];
-    normal[2] = rotation[0][2];
-
-    double x_insert[6], x_starting[3], orientation_vec[3];
-    x_starting[0] = x[0];
-    x_starting[1] = x[1];
-    x_starting[2] = x[2];
-    x_insert[0] = x[0] - r_surf*normal[0]; // ylz normals point out, so negative sign
-    x_insert[1] = x[1] - r_surf*normal[1];
-    x_insert[2] = x[2] - r_surf*normal[2];
-    random_orientation_on_plane(normal, orientation_vec);
-
-    // shift dimer so center of mass is at equilibrium distance from surface
-    x_insert[0] -= 0.5*insert_sigma*orientation_vec[0];
-    x_insert[1] -= 0.5*insert_sigma*orientation_vec[1];
-    x_insert[2] -= 0.5*insert_sigma*orientation_vec[2];
-    x_insert[3] = x_insert[0] + insert_sigma*orientation_vec[0];
-    x_insert[4] = x_insert[1] + insert_sigma*orientation_vec[1];
-    x_insert[5] = x_insert[2] + insert_sigma*orientation_vec[2];
-
-    double norm = sqrt(x_starting[0]*x_starting[0] + x_starting[2]*x_starting[2]);
-    d_aligned[ilocal] = x_starting[0] * normal[0] / norm + x_starting[2] * normal[2] / norm;
-    
-    // apply PBC
-    domain->minimum_image(FLERR, x_insert[0], x_insert[1], x_insert[2]);
-    domain->minimum_image(FLERR, x_insert[3], x_insert[4], x_insert[5]);
-
-    // add to global vector of candidate coords
-    insert_coords[comm->me*max_nucleate_global + n_added_local][0] = x_insert[0];
-    insert_coords[comm->me*max_nucleate_global + n_added_local][1] = x_insert[1];
-    insert_coords[comm->me*max_nucleate_global + n_added_local][2] = x_insert[2];
-    insert_coords[comm->me*max_nucleate_global + n_added_local][3] = x_insert[3];
-    insert_coords[comm->me*max_nucleate_global + n_added_local][4] = x_insert[4];
-    insert_coords[comm->me*max_nucleate_global + n_added_local][5] = x_insert[5];
-
-    filled_coords_flags[comm->me*max_nucleate_global + n_added_local] = 1;
-    n_added_local++;
-    ++nuc_iterator;
-
-    if (n_added_local == n_nucleate_local) break; // break if we've added enough atoms this step
   }
 
   // communicate all inserted coords to all procs
@@ -267,7 +269,7 @@ void FixNucleate::post_integrate() {
   // now that candidates have been communicated, check for overlaps and insert
   int owned_by_proc = 0;
   int overlapflag = 0;
-  int is_mine[comm->nprocs*max_nucleate_global];
+  int is_mine[comm->nprocs*max_nucleate_global], overlap_flags[comm->nprocs*max_nucleate_global];
   int owned_by_me_left = 0, owned_by_me_right = 0;
   for (int icoord=0; icoord < comm->nprocs*max_nucleate_global; icoord++) {
     is_mine[icoord] = 0;
@@ -279,6 +281,16 @@ void FixNucleate::post_integrate() {
     if (!(owned_by_me_left && owned_by_me_right)) continue;
 
     is_mine[icoord] = 1;
+
+    if (!is_mine[icoord]) continue;
+    
+    // check for overlaps with mine, ghosts and other coords to be inserted
+    // if there is a pairwise overlap, insert neither
+    // TODO: could probably communicate this across procs, but who cares
+    overlap_flags[icoord] = 0;
+    check_overlap(insert_coords[icoord], overlap_flags[icoord]);
+    check_overlap(insert_coords[icoord]+3, overlap_flags[icoord]);
+    pairwise_overlap(insert_coords, filled_coords_flags, comm->nprocs*max_nucleate_global, icoord, overlap_flags[icoord]);
   }
 
   if (atom->map_style != Atom::MAP_NONE) atom->map_clear();
@@ -290,11 +302,8 @@ void FixNucleate::post_integrate() {
     if (!is_mine[icoord]) continue;
     
     // check if there is an overlap with existing atoms
-    overlapflag = 0;
-    check_overlap(insert_coords[icoord], overlapflag);
-    check_overlap(insert_coords[icoord]+3, overlapflag);
-    if (overlapflag) continue;
-    
+    if (overlap_flags[icoord]) continue;
+
     atom->avec->create_atom(2, insert_coords[icoord]);
     atom->avec->create_atom(3, insert_coords[icoord]+3);
 
@@ -424,7 +433,7 @@ void FixNucleate::average_normals() {
 void FixNucleate::check_overlap(double* coords, int& overlapflag) {
   double delx, dely, delz, rsq;
   if (overlapsq > 0) {
-    for (int i = 0; i < atom->nlocal; i++) {
+    for (int i = 0; i < atom->nlocal+atom->nghost; i++) {
       delx = coords[0] - atom->x[i][0];
       dely = coords[1] - atom->x[i][1];
       delz = coords[2] - atom->x[i][2];
@@ -437,6 +446,25 @@ void FixNucleate::check_overlap(double* coords, int& overlapflag) {
     }
   }
 }
+
+void FixNucleate::pairwise_overlap(double** coords, int* isfilled, int ncoords, int ncheck, int& overlapflag) {
+  double delx, dely, delz, rsq;
+  if (overlapsq > 0) {
+    for (int i = 0; i < ncoords-1; i++) {
+      if (!isfilled[i]) continue;
+      delx = coords[i][0] - coords[ncheck][0];
+      dely = coords[i][1] - coords[ncheck][1];
+      delz = coords[i][2] - coords[ncheck][2];
+      domain->minimum_image(FLERR, delx,dely,delz);
+      rsq = delx*delx + dely*dely + delz*delz;
+      if (rsq < overlapsq) {
+        overlapflag = 1;
+        return;
+      }
+    }
+  }
+}
+
 
 void FixNucleate::check_ownership(double* coords, int& flag) {
   double lamda[3];

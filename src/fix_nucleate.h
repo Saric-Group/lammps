@@ -27,6 +27,7 @@ class FixNucleate : public Fix {
     void initialise_v(double *, const double);
     void check_ownership(double*, int&);
     void check_overlap(double*, int&);
+    void pairwise_overlap(double**, int*, int, int, int&);
     void random_orientation_on_plane(double*, double*);
 
     // taken from fix_bond_create.cpp
