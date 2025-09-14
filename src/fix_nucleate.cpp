@@ -281,8 +281,6 @@ void FixNucleate::post_integrate() {
     if (!(owned_by_me_left && owned_by_me_right)) continue;
 
     is_mine[icoord] = 1;
-
-    if (!is_mine[icoord]) continue;
     
     // check for overlaps with mine, ghosts and other coords to be inserted
     // if there is a pairwise overlap, insert neither
@@ -452,6 +450,7 @@ void FixNucleate::pairwise_overlap(double** coords, int* isfilled, int ncoords, 
   if (overlapsq > 0) {
     for (int i = 0; i < ncoords-1; i++) {
       if (!isfilled[i]) continue;
+      if (i == ncheck) continue;
       delx = coords[i][0] - coords[ncheck][0];
       dely = coords[i][1] - coords[ncheck][1];
       delz = coords[i][2] - coords[ncheck][2];
