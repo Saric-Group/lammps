@@ -18,6 +18,7 @@
 #include "update.h"
 
 #include <set>
+#include <cstring>
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -128,7 +129,7 @@ void FixNucleate::init_list(int /*id*/, NeighList *ptr)
 void FixNucleate::post_integrate() {
   // TODO: initialise a lot of variables here outside of loops
   // TODO: remove alignment atom/property
-  // TODO: ownership check is done for COM of created atoms, there could be issues when crossing domains
+  // TODO: forward_comm somehow breaks everything, would be nice if this could work at some point
   if ((update->ntimestep-noffset) % nevery) return;
 
   // figure out how many nucleation events to attempt this step
@@ -218,7 +219,7 @@ void FixNucleate::post_integrate() {
     normal[1] = rotation[0][1];
     normal[2] = rotation[0][2];
 
-    double x_insert[3], x_starting[3], orientation_vec[3];
+    double x_insert[6], x_starting[3], orientation_vec[3];
     x_starting[0] = x[0];
     x_starting[1] = x[1];
     x_starting[2] = x[2];
@@ -346,6 +347,12 @@ void FixNucleate::post_integrate() {
     atom->special[nlocal_prev+2*iinsert][0] = atom->tag[nlocal_prev+(2*iinsert)+1];
     atom->nspecial[nlocal_prev+2*iinsert+1][0] = 1;
     atom->special[nlocal_prev+2*iinsert+1][0] = atom->tag[nlocal_prev+(2*iinsert)];
+
+    // this is vital and I have no idea what it does
+    // bond info doesn't need to be communicated since we're only adding local bonds
+    // taken from fix_bond_create.cpp
+    rebuild_special_one(nlocal_prev+2*iinsert);
+    rebuild_special_one(nlocal_prev+2*iinsert+1);
 
     if (!force->newton_bond) {
       atom->bond_type[atom->map(atom->tag[nlocal_prev+2*iinsert])][bond_type] = 1;
@@ -500,4 +507,92 @@ void FixNucleate::random_orientation_on_plane(double* normal_vec, double *out_ve
   for(uint i=0;i<3;i++) out_vec[i] *= norm;
   
   delete [] buff_vec;
+}
+
+void FixNucleate::rebuild_special_one(int m)
+{
+  // FelixWodaczek: taken from fix_bond_create.cpp, don't fully understand it
+  int i,j,n,n1,cn1,cn2,cn3;
+  tagint *slist;
+
+  tagint *tag = atom->tag;
+  int **nspecial = atom->nspecial;
+  tagint **special = atom->special;
+
+  int maxspecial = atom->maxspecial;
+  tagint* copy = new tagint[maxspecial*maxspecial + maxspecial];
+
+  // existing 1-2 neighs of atom M
+
+  slist = special[m];
+  n1 = nspecial[m][0];
+  cn1 = 0;
+  for (i = 0; i < n1; i++)
+    copy[cn1++] = slist[i];
+
+  // new 1-3 neighs of atom M, based on 1-2 neighs of 1-2 neighs
+  // exclude self
+  // remove duplicates after adding all possible 1-3 neighs
+
+  cn2 = cn1;
+  for (i = 0; i < cn1; i++) {
+    n = atom->map(copy[i]);
+    if (n < 0)
+      error->one(FLERR, Error::NOLASTLINE, "Fix {} needs ghost atoms from further away", style);
+    slist = special[n];
+    n1 = nspecial[n][0];
+    for (j = 0; j < n1; j++)
+      if (slist[j] != tag[m]) copy[cn2++] = slist[j];
+  }
+
+  cn2 = dedup(cn1,cn2,copy);
+  if (cn2 > atom->maxspecial)
+    error->one(FLERR, Error::NOLASTLINE, "Special list size exceeded in fix {}", style);
+
+  // new 1-4 neighs of atom M, based on 1-2 neighs of 1-3 neighs
+  // exclude self
+  // remove duplicates after adding all possible 1-4 neighs
+
+  cn3 = cn2;
+  for (i = cn1; i < cn2; i++) {
+    n = atom->map(copy[i]);
+    if (n < 0)
+      error->one(FLERR, Error::NOLASTLINE, "Fix {} needs ghost atoms from further away", style);
+    slist = special[n];
+    n1 = nspecial[n][0];
+    for (j = 0; j < n1; j++)
+      if (slist[j] != tag[m]) copy[cn3++] = slist[j];
+  }
+
+  cn3 = dedup(cn2,cn3,copy);
+  if (cn3 > atom->maxspecial)
+    error->one(FLERR, Error::NOLASTLINE, "Special list size exceeded in fix {}", style);
+
+  // store new special list with atom M
+
+  nspecial[m][0] = cn1;
+  nspecial[m][1] = cn2;
+  nspecial[m][2] = cn3;
+  memcpy(special[m],copy,cn3*sizeof(int));
+  
+  delete [] copy;
+}
+
+int FixNucleate::dedup(int nstart, int nstop, tagint *copy)
+{
+  // FelixWodaczek: taken from fix_bond_create.cpp, don't fully understand it
+  int i;
+
+  int m = nstart;
+  while (m < nstop) {
+    for (i = 0; i < m; i++)
+      if (copy[i] == copy[m]) {
+        copy[m] = copy[nstop-1];
+        nstop--;
+        break;
+      }
+    if (i == m) m++;
+  }
+
+  return nstop;
 }

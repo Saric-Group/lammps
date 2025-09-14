@@ -29,6 +29,10 @@ class FixNucleate : public Fix {
     void check_overlap(double*, int&);
     void random_orientation_on_plane(double*, double*);
 
+    // taken from fix_bond_create.cpp
+    void rebuild_special_one(int);
+    int dedup(int, int, tagint*);
+
   private:
     int nlevels_respa;
     int seed; // seed for random number generator
