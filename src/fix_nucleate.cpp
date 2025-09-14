@@ -307,29 +307,11 @@ void FixNucleate::post_integrate() {
   int n_insert_before = global_insertions - my_insertions, n_bonds = atom->num_bond[0]; // TODO: should be num_bond[itype]?
   // and use that knowledge to properly set atom tags and molecule IDs
   for (int iinsert=0; iinsert<my_insertions; iinsert++) {
-    // tags
     atom->tag[nlocal_prev+2*iinsert] = max_atomtag + (2 * n_insert_before) + 2 * iinsert + 1;
     atom->tag[nlocal_prev+(2*iinsert)+1] = max_atomtag + (2 * n_insert_before) + 2 * iinsert + 2;
     atom->molecule[nlocal_prev+2*iinsert] = maxmol_all + n_insert_before + iinsert + 1;
     atom->molecule[nlocal_prev+(2*iinsert)+1] = maxmol_all + n_insert_before + iinsert + 1;
-
-    // now add bonds, as taken from create_bonds.cpp
-    atom->bond_type[nlocal_prev+2*iinsert][0] = 1; // TODO: should be a variable bond type
-    atom->bond_atom[nlocal_prev+2*iinsert][0] = atom->tag[nlocal_prev+(2*iinsert)+1];
-    atom->num_bond[nlocal_prev+2*iinsert] = 1;
-    if (!force->newton_bond) {
-      atom->bond_type[nlocal_prev+(2*iinsert)+1][0] = 1;
-      atom->bond_atom[nlocal_prev+(2*iinsert)+1][0] = atom->tag[nlocal_prev+2*iinsert];
-      atom->num_bond[nlocal_prev+(2*iinsert)+1] = 1;
-    }
   }
-
-  // also all taken from create_bonds.cpp
-  bigint nbonds = 0;
-  for (int i = 0; i < nlocal; i++) nbonds += atom->num_bond[i];
-  MPI_Allreduce(MPI_IN_PLACE,&nbonds,1,MPI_LMP_BIGINT,MPI_SUM,world);
-
-  if (!force->newton_bond) atom->nbonds /= 2;
 
   // if (atom->tag_enable) atom->tag_extend(); // <- alternative to handling myself
   atom->tag_check(); // if this fails, I did something wrong
@@ -345,6 +327,34 @@ void FixNucleate::post_integrate() {
     atom->map_init();
     atom->map_set();
   }
+
+  // now that map exists again, add bonds back in
+  for (int iinsert=0; iinsert<my_insertions; iinsert++) {
+    // as taken from create_bonds.cpp
+    atom->bond_type[atom->map(atom->tag[nlocal_prev+2*iinsert])][0] = 1; // TODO: should be a variable bond type
+    atom->bond_atom[atom->map(atom->tag[nlocal_prev+2*iinsert])][0] = atom->tag[nlocal_prev+(2*iinsert)+1];
+    atom->num_bond[atom->map(atom->tag[nlocal_prev+2*iinsert])] = 1;
+    
+    // and, importantly, also add marker for 1-2 special interaction (bonds)
+    atom->nspecial[nlocal_prev+2*iinsert][0] = 1;
+    atom->special[nlocal_prev+2*iinsert][0] = atom->tag[nlocal_prev+(2*iinsert)+1];
+    atom->nspecial[nlocal_prev+2*iinsert+1][0] = 1;
+    atom->special[nlocal_prev+2*iinsert+1][0] = atom->tag[nlocal_prev+(2*iinsert)];
+
+    if (!force->newton_bond) {
+      atom->bond_type[atom->map(atom->tag[nlocal_prev+2*iinsert])][bond_type] = 1;
+      atom->bond_atom[atom->map(atom->tag[nlocal_prev+2*iinsert])][bond_type] = atom->tag[nlocal_prev+2*iinsert];
+      atom->num_bond[atom->map(atom->tag[nlocal_prev+2*iinsert])] = 1;
+    }
+  }
+
+  // also all taken from create_bonds.cpp
+  bigint nbonds = 0;
+  for (int i = 0; i < nlocal; i++) nbonds += atom->num_bond[i];
+  MPI_Allreduce(MPI_IN_PLACE,&nbonds,1,MPI_LMP_BIGINT,MPI_SUM,world);
+  if (!force->newton_bond) atom->nbonds /= 2;
+
+  next_reneighbor = update->ntimestep;
 
   memory->destroy(insert_coords);
   memory->destroy(filled_coords_flags);
