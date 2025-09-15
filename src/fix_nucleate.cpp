@@ -307,7 +307,7 @@ void FixNucleate::post_integrate() {
 
     for (int newind=atom->nlocal-2; newind<atom->nlocal; newind++) {
       initialise_v(atom->v[newind], atom->rmass[newind]);
-      atom->mask[newind] = 1 | groupbit;
+      atom->mask[newind] = 1;
       atom->image[newind] = ((imageint) IMGMAX << IMG2BITS) |
           ((imageint) IMGMAX << IMGBITS) | IMGMAX;
       modify->create_attribute(newind);
@@ -448,17 +448,21 @@ void FixNucleate::check_overlap(double* coords, int& overlapflag) {
 void FixNucleate::pairwise_overlap(double** coords, int* isfilled, int ncoords, int ncheck, int& overlapflag) {
   double delx, dely, delz, rsq;
   if (overlapsq > 0) {
-    for (int i = 0; i < ncoords-1; i++) {
-      if (!isfilled[i]) continue;
-      if (i == ncheck) continue;
-      delx = coords[i][0] - coords[ncheck][0];
-      dely = coords[i][1] - coords[ncheck][1];
-      delz = coords[i][2] - coords[ncheck][2];
-      domain->minimum_image(FLERR, delx,dely,delz);
-      rsq = delx*delx + dely*dely + delz*delz;
-      if (rsq < overlapsq) {
-        overlapflag = 1;
-        return;
+    for (int i = 0; i < ncoords; i++) {
+      for (int j = 0; j < 2; j++) {
+        for (int k = 0; k < 2; k++) {
+          if (!isfilled[i]) continue;
+          if (i == ncheck) continue;
+          delx = coords[i][0+3*j] - coords[ncheck][0+3*k];
+          dely = coords[i][1+3*j] - coords[ncheck][1+3*k];
+          delz = coords[i][2+3*j] - coords[ncheck][2+3*k];
+          domain->minimum_image(FLERR, delx,dely,delz);
+          rsq = delx*delx + dely*dely + delz*delz;
+          if (rsq < overlapsq) {
+            overlapflag = 1;
+            return;
+          }
+        }
       }
     }
   }
