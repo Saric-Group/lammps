@@ -137,14 +137,14 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
             fytmp -= align * fpair * normy;
             fztmp -= align * fpair * normz;
             if (newton_pair || j < nlocal) {
-                f[j][0] -= delx * fpair;
-                f[j][1] -= dely * fpair;
-                f[j][2] -= delz * fpair;
+                f[j][0] += align * fpair * normx;
+                f[j][1] += align * fpair * normy;
+                f[j][2] += align * fpair * normz;
             }
         } else if (jtype == 5) {
-            fxtmp += delx * fpair;
-            fytmp += dely * fpair;
-            fztmp += delz * fpair;
+            fxtmp += align * fpair * normx;
+            fytmp += align * fpair * normy;
+            fztmp += align * fpair * normz;
             if (newton_pair || j < nlocal) {
                 f[j][0] -= align * fpair * normx;
                 f[j][1] -= align * fpair * normy;
