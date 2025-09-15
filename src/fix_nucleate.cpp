@@ -25,6 +25,9 @@ using namespace FixConst;
 
 enum { WARN, NOWARN }; // warnflag values
 
+// values for lifetime_flag
+enum { LIFETIME_OFF, LIFETIME_ON, LIFETIME_HYDROLYSIS };
+
 FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, narg, arg) {
   int iarg = 3;
   force_reneighbor = 1;
@@ -40,6 +43,7 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
   overlap = 0; overlapsq=0;
   warnflag = WARN;
   insert_sigma = 1.0;
+  lifetime_flag = LIFETIME_OFF; // lifetime tracking
 
   // parse kwargs
   while (iarg < narg) {
@@ -79,23 +83,87 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
       iarg += 1;
     } else if (strcmp(arg[iarg], "noffset") == 0) {
       if (iarg + 2 > narg)
-        error->all(FLERR, "Missing numeric parameter after offset kwarg.");
+        error->all(FLERR, "Missing numeric parameter after noffset kwarg.");
 
       noffset = utils::inumeric(FLERR, arg[iarg+1], false, lmp);
+      iarg += 2;
+    } else if (strcmp(arg[iarg], "lifetime") == 0) {
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix bond/react command: "
+                                    "'lifetime' keyword has too few arguments");
+      if (strcmp(arg[iarg+1], "hydrolysis") == 0) {
+        if (iarg + 3 > narg) error->all(FLERR, "Illegal fix bond/react command: "
+                                    "'lifetime hydrolysis' keyword has too few arguments");
+        lifetime_flag = LIFETIME_HYDROLYSIS;
+        hydrolysis_seed = utils::inumeric(FLERR, arg[iarg + 2], false, lmp);
+        iarg += 1;
+      } else {
+        lifetime_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
+      }
       iarg += 2;
     } else {
       error->all(FLERR, "Illegal fix nucleate command.");
     }
   }
 
-  random = new RanMars(lmp, seed + comm->me);
+  // lifetime tracking variables, initialised in post_constructor
+  hydrolysis_random = nullptr;
+  id_lifetime_fix = utils::strdup("bond_react_lifetime");
+  id_hydrolysis_fix = utils::strdup("bond_react_hydrolysis");
+
 }
 
 FixNucleate::~FixNucleate() {
   delete random;
+
+  if (hydrolysis_random != nullptr) {
+    delete hydrolysis_random;
+    hydrolysis_random = nullptr;
+  }
+
+  // delete lifetime fix if not already deleted
+  // fix bond/react handles the same fixes, therefore do this here
+  if (id_lifetime_fix != nullptr && modify->get_fix_by_id(id_lifetime_fix)) modify->delete_fix(id_lifetime_fix);
+  if (id_hydrolysis_fix != nullptr && modify->get_fix_by_id(id_hydrolysis_fix)) modify->delete_fix(id_hydrolysis_fix);
+  delete[] id_lifetime_fix;
+  delete[] id_hydrolysis_fix;
 }
 
 void FixNucleate::post_constructor() {
+  random = new RanMars(lmp, seed + comm->me);
+
+  if (lifetime_flag) {
+    // create an atom property to store the lifetime of atoms
+
+    // if fix doesn't already exist, make it here
+    // after all, fix bond/react could have already created it
+    if (!modify->get_fix_by_id(id_lifetime_fix)) { 
+      fix_lifetime = modify->add_fix(std::string(id_lifetime_fix) +
+                                     " all property/atom i_creation_steps ghost yes");
+      
+      // initialize per-atom creation_steps to step 0
+      int flag,cols;
+      int ct_index = atom->find_custom("creation_steps",flag,cols);
+      int *i_creation_steps = atom->ivector[ct_index];
+      for (int i = 0; i < atom->nlocal; i++)
+        i_creation_steps[i] = 0;
+    }
+    if (lifetime_flag == LIFETIME_HYDROLYSIS) {
+      if (!modify->get_fix_by_id(id_hydrolysis_fix)) {
+        fix_hydrolysis = modify->add_fix(std::string(id_hydrolysis_fix) +
+                                         " all property/atom d_hydrolysis_rn ghost yes");
+        
+        hydrolysis_random = new RanMars(lmp,hydrolysis_seed + comm->me);
+
+        // initialize per-atom hydrolysis_steps to step 0
+        int flag,cols;
+        int hydro_index = atom->find_custom("hydrolysis_rn",flag,cols);
+        double *d_hydrolysis_rn = atom->dvector[hydro_index];
+        for (int i = 0; i < atom->nlocal; i++)
+          d_hydrolysis_rn[i] = hydrolysis_random->uniform();
+      }
+    }
+  }
+
   if(!modify->get_fix_by_id("normal_tracking"))
     Fix* fix2 = modify->add_fix("normal_tracking all property/atom d_aligned");
 }
@@ -170,6 +238,9 @@ void FixNucleate::post_integrate() {
   std::set<int>::iterator nuc_iterator = nucleate_indices.begin();
 
   // not sure if necessary but both addlipid and bond/react do this
+  // fix bond/react says:
+  // acquire updated ghost atom positions
+  // necessary b/c are calling this after integrate, but before Verlet comm
   comm->forward_comm();
 
   neighbor->build_one(list);
@@ -315,6 +386,9 @@ void FixNucleate::post_integrate() {
 
     my_insertions++;
   }
+
+  // add creation times for lifetime tracking
+  if (lifetime_flag) add_creation_times(my_insertions);
 
   // send around how many insertions each proc made
   MPI_Scan(&my_insertions, &global_insertions, 1, MPI_INT, MPI_SUM, world);
@@ -538,6 +612,32 @@ void FixNucleate::random_orientation_on_plane(double* normal_vec, double *out_ve
   for(uint i=0;i<3;i++) out_vec[i] *= norm;
   
   delete [] buff_vec;
+}
+
+void FixNucleate::add_creation_times(int nlast){
+  // update lifetimes
+  // give this function nlast atoms to set creation times for
+  // needs atom->nlocal to be correct
+  if (!nlast) return;
+  if (!lifetime_flag) error->all(FLERR, "FixNucleate::add_creation_times called but lifetime tracking not enabled");
+
+  int flag,cols;
+  
+  // regular creation steps
+  int ct_index = atom->find_custom("creation_steps",flag,cols);
+  int *i_creation_steps = atom->ivector[ct_index];
+  for (int i = atom->nlocal - nlast; i < atom->nlocal; i++) {
+    i_creation_steps[i] = update->ntimestep;
+  }
+
+  // if hydrolysis lifetime tracking, also set random number
+  if (lifetime_flag == LIFETIME_HYDROLYSIS) {
+    int hydro_index = atom->find_custom("hydrolysis_rn",flag,cols);
+    double *d_hydrolysis_rn = atom->dvector[hydro_index];
+    for (int i = atom->nlocal - nlast; i < atom->nlocal; i++) {
+      d_hydrolysis_rn[i] = hydrolysis_random->uniform();
+    }
+  }
 }
 
 void FixNucleate::rebuild_special_one(int m)

@@ -29,6 +29,7 @@ class FixNucleate : public Fix {
     void check_overlap(double*, int&);
     void pairwise_overlap(double**, int*, int, int, int&);
     void random_orientation_on_plane(double*, double*);
+    void add_creation_times(int);
 
     // taken from fix_bond_create.cpp
     void rebuild_special_one(int);
@@ -43,7 +44,18 @@ class FixNucleate : public Fix {
     double overlap, overlapsq; // minimum distance from existing atoms
     double insert_sigma; // bond length of inserted dimer
     int bond_type; // bond type of inserted dimer
-    int noffset; // run at timestep + noffset for nucleation check
+    int noffset; // run at timestep + noffset to avoid clashes with eg. bond/react
+
+    // lifetime tracking flags and variables
+    // makes two atom/property fixes and keeps track of them
+    int lifetime_flag; // @FelixWodaczek/lifetime flag for lifetime keyword
+    int hydrolysis_seed; // @FelixWodaczek/lifetime seed for hydrolysis keyword
+    Fix *fix_lifetime;           // @FelixWodaczek/lifetime fix for atom/property i_creation_times
+    Fix *fix_hydrolysis;         // @FelixWodaczek/lifetime fix for atom/property d_hydrolysis_rn
+    class RanMars *hydrolysis_random; // @FelixWodaczek/lifetime random number for hydrolysis keyword
+    char *id_lifetime_fix;   // @FelixWodaczek/lifetime id of internally created fix for lifetime keyword
+    char *id_hydrolysis_fix; // @FelixWodaczek/lifetime id of internally created fix for hydrolysis keyword
+    char *statted_id;        // name of 'stabilization group' per-atom property
 
     double** insert_coords; // store coords of inserted atoms to check overlap
     int* filled_coords_flags; // flags to indicate which insert_coords are filled
