@@ -694,8 +694,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   id_fix1 = nullptr;
   id_fix2 = nullptr;
   id_fix3 = nullptr;
-  id_lifetime_fix = nullptr; // @FelixWodaczek/lifetime
-  id_hydrolysis_fix = nullptr; // @FelixWodaczek/lifetime
+  id_lifetime_fix = utils::strdup("bond_react_lifetime"); // @FelixWodaczek/lifetime
+  id_hydrolysis_fix = utils::strdup("bond_react_hydrolysis"); // @FelixWodaczek/lifetime
+
   statted_id = nullptr;
   custom_exclude_flag = 0;
 
@@ -807,8 +808,10 @@ FixBondReact::~FixBondReact()
   delete[] id_fix2;
 
   // @FelixWodaczek/lifetime delete lifetime fix if not already deleted
-  if (id_lifetime_fix && modify->get_fix_by_id(id_lifetime_fix)) modify->delete_fix(id_lifetime_fix);
+  if (id_lifetime_fix != nullptr && modify->get_fix_by_id(id_lifetime_fix)) modify->delete_fix(id_lifetime_fix);
+  if (id_hydrolysis_fix != nullptr && modify->get_fix_by_id(id_hydrolysis_fix)) modify->delete_fix(id_hydrolysis_fix);
   delete[] id_lifetime_fix;
+  delete[] id_hydrolysis_fix;
 
   delete[] statted_id;
   delete[] guess_branch;
@@ -928,7 +931,6 @@ void FixBondReact::post_constructor()
   // @FelixWodaczek/lifetime handle lifetime flag here
   if (lifetime_flag != LIFETIME_OFF) {
     // create an atom property to store the lifetime of atoms
-    id_lifetime_fix = utils::strdup("bond_react_lifetime");
     if (!modify->get_fix_by_id(id_lifetime_fix)) {
       fix_lifetime = modify->add_fix(std::string(id_lifetime_fix) +
                                      " all property/atom i_creation_steps ghost yes");
@@ -941,7 +943,6 @@ void FixBondReact::post_constructor()
         i_creation_steps[i] = 0;
     }
     if (lifetime_flag == LIFETIME_HYDROLYSIS) {
-      id_hydrolysis_fix = utils::strdup("bond_react_hydrolysis");
       if (!modify->get_fix_by_id(id_hydrolysis_fix)) {
         fix_hydrolysis = modify->add_fix(std::string(id_hydrolysis_fix) +
                                          " all property/atom d_hydrolysis_rn ghost yes");
