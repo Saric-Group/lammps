@@ -388,7 +388,7 @@ void FixNucleate::post_integrate() {
   }
 
   // add creation times for lifetime tracking
-  if (lifetime_flag) add_creation_times(my_insertions);
+  if (lifetime_flag) add_creation_times(2*my_insertions);
 
   // send around how many insertions each proc made
   MPI_Scan(&my_insertions, &global_insertions, 1, MPI_INT, MPI_SUM, world);
