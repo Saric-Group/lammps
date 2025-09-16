@@ -23,18 +23,17 @@ class PairNematicAlign : public Pair {
   void coeff(int, char **) override;
   void init_style() override;
   double init_one(int, int) override;
-  double single(int, int, int, int, double, double, double, double &) override;
+  // double single(int, int, int, int, double, double, double, double &) override;
 
  protected:
   double cut_global;
   double **epsilon;
   double **cut;
 
-  int **wca_flag;
+  int **soft_repulsion_flag;
   int **no_radial_flag;
-  double **lj_sigma;
-  double **lj_epsilon;
-
+  double **soft_cut;
+  double **soft_eps;
 
   virtual void allocate();
 };

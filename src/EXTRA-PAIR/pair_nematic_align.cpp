@@ -34,9 +34,9 @@ PairNematicAlign::~PairNematicAlign()
     memory->destroy(cutsq);
     memory->destroy(epsilon);
     memory->destroy(cut);
-    memory->destroy(wca_flag);
-    memory->destroy(lj_sigma);
-    memory->destroy(lj_epsilon);
+    memory->destroy(soft_repulsion_flag);
+    memory->destroy(soft_cut);
+    memory->destroy(soft_eps);
     memory->destroy(no_radial_flag);
   }
 }
@@ -55,14 +55,14 @@ void PairNematicAlign::allocate()
   memory->create(epsilon, n + 1, n + 1, "pair:epsilon");
   memory->create(cut, n + 1, n + 1, "pair:cut");
 
-  memory->create(wca_flag, n + 1, n + 1, "pair:wca_flag");
-  memory->create(lj_sigma, n + 1, n + 1, "pair:lj_sigma");
-  memory->create(lj_epsilon, n + 1, n + 1, "pair:lj_epsilon");
+  memory->create(soft_repulsion_flag, n + 1, n + 1, "pair:soft_repulsion_flag");
+  memory->create(soft_cut, n + 1, n + 1, "pair:soft_cut");
+  memory->create(soft_eps, n + 1, n + 1, "pair:soft_eps");
   memory->create(no_radial_flag, n + 1, n + 1, "pair:no_radial_flag");
 
   for (int i = 1; i <= n; i++) {
     for (int j = 1; j <= n; j++) {
-      wca_flag[i][j] = 0;
+      soft_repulsion_flag[i][j] = 0;
       no_radial_flag[i][j] = 0;
     }
   }
@@ -108,7 +108,7 @@ void PairNematicAlign::coeff(int narg, char **arg)
   double epsilon_one = utils::numeric(FLERR, arg[2], false, lmp);
 
   double cut_one = cut_global;
-  int wca_flag_one = 0;
+  int soft_repulsion_flag_one = 0;
   double lj_sigma_one = 0.0;
   double lj_epsilon_one = 0.0;
 
@@ -121,7 +121,7 @@ void PairNematicAlign::coeff(int narg, char **arg)
   }
 
   if (wca_idx != -1) {
-    wca_flag_one = 1;
+    soft_repulsion_flag_one = 1;
     if (narg_eff != wca_idx + 3)
       error->all(FLERR, "Incorrect args for pair coefficients: wca requires 2 parameters");
 
@@ -145,9 +145,9 @@ void PairNematicAlign::coeff(int narg, char **arg)
     for (int j = MAX(jlo, i); j <= jhi; j++) {
       epsilon[i][j] = epsilon_one;
       cut[i][j] = cut_one;
-      wca_flag[i][j] = wca_flag_one;
-      lj_sigma[i][j] = lj_sigma_one;
-      lj_epsilon[i][j] = lj_epsilon_one;
+      soft_repulsion_flag[i][j] = soft_repulsion_flag_one;
+      soft_cut[i][j] = lj_sigma_one;
+      soft_eps[i][j] = lj_epsilon_one;
       no_radial_flag[i][j] = no_radial_flag_one;
       setflag[i][j] = 1;
       count++;
@@ -170,22 +170,24 @@ double PairNematicAlign::init_one(int i, int j)
   if (!setflag[i][j]) {
     epsilon[i][j] = 0.0;
     cut[i][j] = 0.0;
-    wca_flag[i][j] = 0;
-    lj_sigma[i][j] = 0.0;
-    lj_epsilon[i][j] = 0.0;
+    soft_repulsion_flag[i][j] = 0;
+    soft_cut[i][j] = 0.0;
+    soft_eps[i][j] = 0.0;
     no_radial_flag[i][j] = 0.0;
   }
 
   epsilon[j][i] = epsilon[i][j];
   cut[j][i] = cut[i][j];
-  wca_flag[j][i] = wca_flag[i][j];
-  lj_sigma[j][i] = lj_sigma[i][j];
-  lj_epsilon[j][i] = lj_epsilon[i][j];
+  soft_repulsion_flag[j][i] = soft_repulsion_flag[i][j];
+  soft_cut[j][i] = soft_cut[i][j];
+  soft_eps[j][i] = soft_eps[i][j];
   no_radial_flag[j][i] = no_radial_flag[i][j];
 
   double nematic_cut = cut[i][j];
   double wca_cut = 0.0;
-  if (wca_flag[i][j] && lj_sigma[i][j] > 0.0) { wca_cut = 1.12246204831 * lj_sigma[i][j]; }
+  if (soft_repulsion_flag[i][j] && soft_cut[i][j] > 0.0) {
+    wca_cut = 1.12246204831 * soft_cut[i][j];
+  }
 
   return MAX(nematic_cut, wca_cut);
 }
@@ -254,21 +256,19 @@ void PairNematicAlign::compute(int eflag, int vflag)
         tjy = 0.0;
         tjz = 0.0;
 
-        // WCA repulsion (if enabled)
-        if (wca_flag[itype][jtype]) {
-          double lj_s = lj_sigma[itype][jtype];
-          double wca_cut = 1.12246204831 * lj_s;
-          if (r < wca_cut) {
-            double lj_e = lj_epsilon[itype][jtype];
-            double sr2 = lj_s * lj_s / rsq;
-            double sr6 = sr2 * sr2 * sr2;
-            double sr12 = sr6 * sr6;
-            double wca_force_over_r = 48.0 * lj_e * (sr12 - 0.5 * sr6) * rinv * rinv;
+        // soft repulsion (if enabled)
+        if (soft_repulsion_flag[itype][jtype]) {
+          double soft_rc = soft_cut[itype][jtype];
+          double Aij = soft_eps[itype][jtype];
+          if (r < soft_rc) {
+            double xarg = M_PI * r / soft_rc;
+            double Sr = Aij * (1.0 + cos(xarg));
+            double dSdr = -Aij * (M_PI / rc) * sin(xarg);
 
-            fx += wca_force_over_r * delx;
-            fy += wca_force_over_r * dely;
-            fz += wca_force_over_r * delz;
-            if (eflag) energy += 4.0 * lj_e * (sr12 - sr6) + lj_e;
+            fx += dSdr * delx * rinv;
+            fy += dSdr * dely * rinv;
+            fz += dSdr * delz * rinv;
+            if (eflag) energy += Sr;
           }
         }
 
@@ -375,36 +375,36 @@ void PairNematicAlign::compute(int eflag, int vflag)
   if (vflag_fdotr) virial_fdotr_compute();
 }
 
-double PairNematicAlign::single(int i, int j, int itype, int jtype, double rsq, double factor_coul,
-                                double factor_lj, double &fforce)
-{
-  // cutoff guard
-  double rc = cut[itype][jtype] > 0.0 ? cut[itype][jtype] : cut_global;
-  if (rsq >= rc * rc) {
-    fforce = 0.0;
-    return 0.0;
-  }
+// double PairNematicAlign::single(int i, int j, int itype, int jtype, double rsq, double factor_coul,
+//                                 double factor_lj, double &fforce)
+// {
+//   // cutoff guard
+//   double rc = cut[itype][jtype] > 0.0 ? cut[itype][jtype] : cut_global;
+//   if (rsq >= rc * rc) {
+//     fforce = 0.0;
+//     return 0.0;
+//   }
 
-  double energy = 0.0;
-  double wca_force_over_r = 0.0;
+//   double energy = 0.0;
+//   double wca_force_over_r = 0.0;
 
-  // WCA repulsion (if enabled)
-  if (wca_flag[itype][jtype]) {
-    double lj_s = lj_sigma[itype][jtype];
-    double wca_cut = 1.12246204831 * lj_s;
-    double r = sqrt(rsq);
-    double rinv = 1 / r;
-    if (r < wca_cut) {
-      double lj_e = lj_epsilon[itype][jtype];
-      double sr2 = lj_s * lj_s / rsq;
-      double sr6 = sr2 * sr2 * sr2;
-      double sr12 = sr6 * sr6;
+//   // WCA repulsion (if enabled)
+//   if (soft_repulsion_flag[itype][jtype]) {
+//     double lj_s = lj_sigma[itype][jtype];
+//     double wca_cut = 1.12246204831 * lj_s;
+//     double r = sqrt(rsq);
+//     double rinv = 1 / r;
+//     if (r < wca_cut) {
+//       double lj_e = lj_epsilon[itype][jtype];
+//       double sr2 = lj_s * lj_s / rsq;
+//       double sr6 = sr2 * sr2 * sr2;
+//       double sr12 = sr6 * sr6;
 
-      wca_force_over_r += 48.0 * lj_e * (sr12 - 0.5 * sr6) * rinv * rinv;
-      energy += 4.0 * lj_e * (sr12 - sr6) + lj_e;
-    }
-  }
+//       wca_force_over_r += 48.0 * lj_e * (sr12 - 0.5 * sr6) * rinv * rinv;
+//       energy += 4.0 * lj_e * (sr12 - sr6) + lj_e;
+//     }
+//   }
 
-  fforce = -wca_force_over_r * factor_lj;    // -dU/dr
-  return energy * factor_lj;
-}
+//   fforce = -wca_force_over_r * factor_lj;    // -dU/dr
+//   return energy * factor_lj;
+// }
