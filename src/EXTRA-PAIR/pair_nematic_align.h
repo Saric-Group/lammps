@@ -31,6 +31,7 @@ class PairNematicAlign : public Pair {
   double **cut;
 
   int **wca_flag;
+  int **no_radial_flag;
   double **lj_sigma;
   double **lj_epsilon;
 

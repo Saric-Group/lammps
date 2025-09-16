@@ -1,5 +1,6 @@
 /* ----------------------------------------------------------------------
    Added by @andraz-gnidovec
+   Modified by Google Gemini to remove unused parameters
 ------------------------------------------------------------------------- */
 
 #include "pair_nematic_angle_soft.h"
@@ -34,8 +35,6 @@ PairNematicSoft::~PairNematicSoft()
     memory->destroy(Aamp);
     memory->destroy(kappa);
     memory->destroy(theta0);
-    memory->destroy(alpha);
-    memory->destroy(epsilon);
     memory->destroy(c0);
     memory->destroy(s0);
     memory->destroy(c0s0);
@@ -56,8 +55,6 @@ void PairNematicSoft::allocate()
   memory->create(Aamp, n + 1, n + 1, "pair:Aamp");
   memory->create(kappa, n + 1, n + 1, "pair:kappa");
   memory->create(theta0, n + 1, n + 1, "pair:theta0");
-  memory->create(alpha, n + 1, n + 1, "pair:alpha");
-  memory->create(epsilon, n + 1, n + 1, "pair:epsilon");
   memory->create(c0, n + 1, n + 1, "pair:c0");
   memory->create(s0, n + 1, n + 1, "pair:s0");
   memory->create(c0s0, n + 1, n + 1, "pair:c0s0");
@@ -78,8 +75,8 @@ void PairNematicSoft::settings(int narg, char **arg)
 
 void PairNematicSoft::coeff(int narg, char **arg)
 {
-  // i j A kappa theta0 alpha [epsilon]
-  if (narg != 6 && narg != 7)
+  // Arguments: i j A kappa theta0
+  if (narg != 5)
     error->all(FLERR, "Incorrect args for pair_coeff in nematic/angle/soft");
   if (!allocated) allocate();
 
@@ -90,9 +87,6 @@ void PairNematicSoft::coeff(int narg, char **arg)
   double A_one = utils::numeric(FLERR, arg[2], false, lmp);
   double kappa_one = utils::numeric(FLERR, arg[3], false, lmp);
   double t0_one = utils::numeric(FLERR, arg[4], false, lmp);
-  double alpha_one = utils::numeric(FLERR, arg[5], false, lmp);
-
-  double epsilon_one = (narg == 7) ? utils::numeric(FLERR, arg[6], false, lmp) : 1.0;
 
   double cut_one = cut_global;
 
@@ -110,8 +104,6 @@ void PairNematicSoft::coeff(int narg, char **arg)
       Aamp[i][j] = A_one;
       kappa[i][j] = kappa_one;
       theta0[i][j] = t0_one;
-      alpha[i][j] = alpha_one;
-      epsilon[i][j] = epsilon_one;
       c0[i][j] = c0_one;
       s0[i][j] = s0_one;
       c0s0[i][j] = c0s0_one;
@@ -135,17 +127,14 @@ void PairNematicSoft::init_style()
 double PairNematicSoft::init_one(int i, int j)
 {
   if (!setflag[i][j]) {
-    Aamp[i][j] = kappa[i][j] = theta0[i][j] = alpha[i][j] = 0.0;
+    Aamp[i][j] = kappa[i][j] = theta0[i][j] = 0.0;
     c0[i][j] = s0[i][j] = c0s0[i][j] = cos2t0[i][j] = c_fac[i][j] = 0.0;
     cut[i][j] = 0.0;
-    epsilon[i][j] = 1.0;
   }
 
   Aamp[j][i] = Aamp[i][j];
   kappa[j][i] = kappa[i][j];
   theta0[j][i] = theta0[i][j];
-  alpha[j][i] = alpha[i][j];
-  epsilon[j][i] = epsilon[i][j];
   c0[j][i] = c0[i][j];
   s0[j][i] = s0[i][j];
   c0s0[j][i] = c0s0[i][j];
@@ -157,19 +146,6 @@ double PairNematicSoft::init_one(int i, int j)
   return cut[i][j];
 }
 
-// geometric correction to account for increased overlap at small angles
-double geometric_correction(double sin_theta, double alpha, double cutoff)
-{
-  double saturation = alpha * cutoff;
-  return sqrt((sin_theta * sin_theta + saturation * saturation) / (1.0 + saturation * saturation));
-}
-
-double dcorr_dtheta(double sin_theta, double sincos_theta, double alpha, double cutoff)
-{
-  double saturation = alpha * cutoff;
-  return sincos_theta /
-      sqrt((1.0 + saturation * saturation) * (sin_theta * sin_theta + saturation * saturation));
-}
 
 void PairNematicSoft::compute(int eflag, int vflag)
 {
@@ -214,8 +190,6 @@ void PairNematicSoft::compute(int eflag, int vflag)
       double rc = cut[itype][jtype];
       double Aij = Aamp[itype][jtype];
       double kij = kappa[itype][jtype];
-      double alphaij = alpha[itype][jtype];
-      double epsilonij = epsilon[itype][jtype];
       double c0ij = c0[itype][jtype];
       double s0ij = s0[itype][jtype];
       double c0s0ij = c0s0[itype][jtype];
@@ -297,7 +271,6 @@ double PairNematicSoft::single(int i, int j, int itype, int jtype, double rsq, d
 
   double Aij = Aamp[itype][jtype];
   double kij = kappa[itype][jtype];
-  double alphaij = alpha[itype][jtype];
   double c0ij = c0[itype][jtype];
   double s0ij = s0[itype][jtype];
   double c0s0ij = c0s0[itype][jtype];
@@ -322,8 +295,6 @@ double PairNematicSoft::single_orientation(int itype, int jtype, double rsq, dou
 
   double Aij = Aamp[itype][jtype];
   double kij = kappa[itype][jtype];
-  double alphaij = alpha[itype][jtype];
-  double epsilonij = epsilon[itype][jtype];
   double c0ij = c0[itype][jtype];
   double s0ij = s0[itype][jtype];
   double c0s0ij = c0s0[itype][jtype];
