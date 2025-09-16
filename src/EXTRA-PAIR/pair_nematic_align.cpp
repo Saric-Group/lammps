@@ -58,9 +58,7 @@ void PairNematicAlign::allocate()
   memory->create(lj_epsilon, n + 1, n + 1, "pair:lj_epsilon");
 
   for (int i = 1; i <= n; i++) {
-    for (int j = 1; j <= n; j++) {
-      wca_flag[i][j] = 0;
-    }
+    for (int j = 1; j <= n; j++) { wca_flag[i][j] = 0; }
   }
 }
 
@@ -86,7 +84,7 @@ void PairNematicAlign::coeff(int narg, char **arg)
   utils::bounds(FLERR, arg[1], 1, atom->ntypes, jlo, jhi, error);
 
   double epsilon_one = utils::numeric(FLERR, arg[2], false, lmp);
-  
+
   double cut_one = cut_global;
   int wca_flag_one = 0;
   double lj_sigma_one = 0.0;
@@ -104,7 +102,7 @@ void PairNematicAlign::coeff(int narg, char **arg)
     wca_flag_one = 1;
     if (narg != wca_idx + 3)
       error->all(FLERR, "Incorrect args for pair coefficients: wca requires 2 parameters");
-    
+
     lj_sigma_one = utils::numeric(FLERR, arg[wca_idx + 1], false, lmp);
     lj_epsilon_one = utils::numeric(FLERR, arg[wca_idx + 2], false, lmp);
 
@@ -115,9 +113,7 @@ void PairNematicAlign::coeff(int narg, char **arg)
     }
 
   } else {
-    if (narg == 4) {
-      cut_one = utils::numeric(FLERR, arg[3], false, lmp);
-    }
+    if (narg == 4) { cut_one = utils::numeric(FLERR, arg[3], false, lmp); }
   }
 
   if (cut_one <= 0.0) error->all(FLERR, "Invalid cutoff specified for pair coefficients");
@@ -164,10 +160,8 @@ double PairNematicAlign::init_one(int i, int j)
 
   double nematic_cut = cut[i][j];
   double wca_cut = 0.0;
-  if (wca_flag[i][j] && lj_sigma[i][j] > 0.0) {
-      wca_cut = 1.12246204831 * lj_sigma[i][j];
-  }
-  
+  if (wca_flag[i][j] && lj_sigma[i][j] > 0.0) { wca_cut = 1.12246204831 * lj_sigma[i][j]; }
+
   return MAX(nematic_cut, wca_cut);
 }
 
@@ -224,102 +218,117 @@ void PairNematicAlign::compute(int eflag, int vflag)
         rinv = 1.0 / r;
 
         energy = 0.0;
-        fx = 0.0; fy = 0.0; fz = 0.0;
-        tix = 0.0; tiy = 0.0; tiz = 0.0;
-        tjx = 0.0; tjy = 0.0; tjz = 0.0;
+        fx = 0.0;
+        fy = 0.0;
+        fz = 0.0;
+        tix = 0.0;
+        tiy = 0.0;
+        tiz = 0.0;
+        tjx = 0.0;
+        tjy = 0.0;
+        tjz = 0.0;
 
         // WCA repulsion (if enabled)
         if (wca_flag[itype][jtype]) {
-            double lj_s = lj_sigma[itype][jtype];
-            double wca_cut = 1.12246204831 * lj_s;
-            if (r < wca_cut) {
-                double lj_e = lj_epsilon[itype][jtype];
-                double sr2 = lj_s * lj_s / rsq;
-                double sr6 = sr2 * sr2 * sr2;
-                double sr12 = sr6 * sr6;
-                double wca_force_over_r = 48.0 * lj_e * (sr12 - 0.5 * sr6) * rinv * rinv;
+          double lj_s = lj_sigma[itype][jtype];
+          double wca_cut = 1.12246204831 * lj_s;
+          if (r < wca_cut) {
+            double lj_e = lj_epsilon[itype][jtype];
+            double sr2 = lj_s * lj_s / rsq;
+            double sr6 = sr2 * sr2 * sr2;
+            double sr12 = sr6 * sr6;
+            double wca_force_over_r = 48.0 * lj_e * (sr12 - 0.5 * sr6) * rinv * rinv;
 
-                fx += wca_force_over_r * delx;
-                fy += wca_force_over_r * dely;
-                fz += wca_force_over_r * delz;
-                if (eflag) energy += 4.0 * lj_e * (sr12 - sr6) + lj_e;
-            }
+            fx += wca_force_over_r * delx;
+            fy += wca_force_over_r * dely;
+            fz += wca_force_over_r * delz;
+            if (eflag) energy += 4.0 * lj_e * (sr12 - sr6) + lj_e;
+          }
         }
 
         // alignment interaction calculation
         rc = cut[itype][jtype];
         if (r < rc && mu[i][3] > 0.0 && mu[j][3] > 0.0) {
-            eps = epsilon[itype][jtype];
-            if (rc <= 0.0) { rc = cut_global; }
-            if (rc <= 0.0) {
-                error->all(FLERR, "Cutoff must be set for pair coefficients in nematic/align");
-            }
+          eps = epsilon[itype][jtype];
+          if (rc <= 0.0) { rc = cut_global; }
+          if (rc <= 0.0) {
+            error->all(FLERR, "Cutoff must be set for pair coefficients in nematic/align");
+          }
 
-            r_over_rcut = r / rc;
+          r_over_rcut = r / rc;
 
-            mu_dot_mu = mu[i][0] * mu[j][0] + mu[i][1] * mu[j][1] + mu[i][2] * mu[j][2];
-            mu1_dot_rij = mu[i][0] * delx + mu[i][1] * dely + mu[i][2] * delz;
-            mu2_dot_rij = mu[j][0] * delx + mu[j][1] * dely + mu[j][2] * delz;
-            
-            // double mu_term = mu_dot_mu * mu_dot_mu;
-            double mu_term = 0.0;
-            double mu1_uij_term = mu1_dot_rij * mu1_dot_rij * rinv * rinv;
-            double mu2_uij_term = mu2_dot_rij * mu2_dot_rij * rinv * rinv;
-            // double full_2nd_term = mu1_uij_term * mu2_uij_term;
-            double full_2nd_term = mu1_uij_term + mu2_uij_term;
+          mu_dot_mu = mu[i][0] * mu[j][0] + mu[i][1] * mu[j][1] + mu[i][2] * mu[j][2];
+          mu1_dot_rij = mu[i][0] * delx + mu[i][1] * dely + mu[i][2] * delz;
+          mu2_dot_rij = mu[j][0] * delx + mu[j][1] * dely + mu[j][2] * delz;
 
-            if (eflag) {
-                energy += -eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut) * (mu_term + full_2nd_term);
-            }
+          // double mu_term = mu_dot_mu * mu_dot_mu;
+          double mu1_uij_term = mu1_dot_rij * mu1_dot_rij * rinv * rinv;
+          double mu2_uij_term = mu2_dot_rij * mu2_dot_rij * rinv * rinv;
+          // double full_2nd_term = mu1_uij_term * mu2_uij_term;
+          double full_2nd_term = mu1_uij_term + mu2_uij_term;
 
-            // force calculation
-            // double force_term1_over_r = -2.0 * (eps / rc) * (1.0 - r_over_rcut) * mu_term * rinv;
-            // double force_term1_over_r = 0.0;
-            // double force_term2_over_r = -2.0 * rinv * rinv * full_2nd_term * eps * (1.0 - r_over_rcut) * (2.0 - r_over_rcut);
-            // double force_term3_mag = 2.0 * eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut) * rinv * rinv * mu2_uij_term * mu1_dot_rij;
-            // double force_term4_mag = 2.0 * eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut) * rinv * rinv * mu1_uij_term * mu2_dot_rij;
+          if (eflag) { energy += -eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut) * full_2nd_term; }
 
-            // fx += (force_term1_over_r + force_term2_over_r) * delx + force_term3_mag * mu[i][0] + force_term4_mag * mu[j][0];
-            // fy += (force_term1_over_r + force_term2_over_r) * dely + force_term3_mag * mu[i][1] + force_term4_mag * mu[j][1];
-            // fz += (force_term1_over_r + force_term2_over_r) * delz + force_term3_mag * mu[i][2] + force_term4_mag * mu[j][2];
+          // helpers
+          const double one_minus = 1.0 - r_over_rcut;    // r_over_rcut = r/rc
+          const double g = -eps * one_minus * one_minus;
+          const double gprime = (2.0 * eps / rc) * one_minus;
 
-            // torque calculation
-            // double torque_common = 2.0 * eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut);
-            double torque_common = 2.0 * eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut) * rinv * rinv;
-            
-            // double ti1_mag = torque_common * mu_dot_mu;
-            // double tix1 = ti1_mag * (mu[i][1] * mu[j][2] - mu[i][2] * mu[j][1]);
-            // double tiy1 = ti1_mag * (mu[i][2] * mu[j][0] - mu[i][0] * mu[j][2]);
-            // double tiz1 = ti1_mag * (mu[i][0] * mu[j][1] - mu[i][1] * mu[j][0]);
+          const double ux = delx * rinv;
+          const double uy = dely * rinv;
+          const double uz = delz * rinv;
 
-            // double ti2_mag = torque_common * rinv * rinv * mu2_uij_term * mu1_dot_rij;
-            // double tix2 = ti2_mag * (mu[i][1] * delz - mu[i][2] * dely);
-            // double tiy2 = ti2_mag * (mu[i][2] * delx - mu[i][0] * delz);
-            // double tiz2 = ti2_mag * (mu[i][0] * dely - mu[i][1] * delx);
-            
-            // tix = tix1 + tix2;
-            // tiy = tiy1 + tiy2;
-            // tiz = tiz1 + tiz2;
+          // projections onto u
+          const double mu1_u = mu1_dot_rij * rinv;    // (mu1·u)
+          const double mu2_u = mu2_dot_rij * rinv;    // (mu2·u)
 
-            // double tj2_mag = torque_common * rinv * rinv * mu1_uij_term * mu2_dot_rij;
-            // double tjx2 = tj2_mag * (mu[j][1] * delz - mu[j][2] * dely);
-            // double tjy2 = tj2_mag * (mu[j][2] * delx - mu[j][0] * delz);
-            // double tjz2 = tj2_mag * (mu[j][0] * dely - mu[j][1] * delx);
+          // -------- force calculation (split into radial + tangential) --------
 
-            // tjx = -tix1 + tjx2;
-            // tjy = -tiy1 + tjy2;
-            // tjz = -tiz1 + tjz2;
+          // components of (mu_k - (mu_k·u) u)  — purely tangential to u
+          const double a1x = mu[i][0] - mu1_u * ux;
+          const double a1y = mu[i][1] - mu1_u * uy;
+          const double a1z = mu[i][2] - mu1_u * uz;
 
-            tix = torque_common * mu1_dot_rij * (mu[i][1] * delz - mu[i][2] * dely);
-            tiy = torque_common * mu1_dot_rij * (mu[i][2] * delx - mu[i][0] * delz);
-            tiz = torque_common * mu1_dot_rij * (mu[i][0] * dely - mu[i][1] * delx);
+          const double a2x = mu[j][0] - mu2_u * ux;
+          const double a2y = mu[j][1] - mu2_u * uy;
+          const double a2z = mu[j][2] - mu2_u * uz;
 
-            tjx = torque_common * mu2_dot_rij * (mu[j][1] * delz - mu[j][2] * dely);
-            tjy = torque_common * mu2_dot_rij * (mu[j][2] * delx - mu[j][0] * delz);
-            tjz = torque_common * mu2_dot_rij * (mu[j][0] * dely - mu[j][1] * delx);
+          // scalars
+          const double S = mu1_u * mu1_u + mu2_u * mu2_u;
+          const double frad_mag = -gprime * S;           // multiplies u
+          const double ftan_pref = -g * (2.0 * rinv);    // multiplies [ mu1_u*a1 + mu2_u*a2 ]
 
+          // radial contribution (along rij)
+          double fx_rad = frad_mag * ux;
+          double fy_rad = frad_mag * uy;
+          double fz_rad = frad_mag * uz;
+
+          // tangential contribution (perpendicular to rij)
+          double fx_tan = ftan_pref * (mu1_u * a1x + mu2_u * a2x);
+          double fy_tan = ftan_pref * (mu1_u * a1y + mu2_u * a2y);
+          double fz_tan = ftan_pref * (mu1_u * a1z + mu2_u * a2z);
+
+          // total force
+          fx += fx_tan;
+          fy += fy_tan;
+          fz += fz_tan;
+
+          // If you want to zero radial force, just comment these three additions out:
+          // fx += fx_rad;  fy += fy_rad;  fz += fz_rad;
+
+          // torque calculation
+          double torque_common =
+              2.0 * eps * (1.0 - r_over_rcut) * (1.0 - r_over_rcut) * rinv * rinv;
+
+          tix = torque_common * mu1_dot_rij * (mu[i][1] * delz - mu[i][2] * dely);
+          tiy = torque_common * mu1_dot_rij * (mu[i][2] * delx - mu[i][0] * delz);
+          tiz = torque_common * mu1_dot_rij * (mu[i][0] * dely - mu[i][1] * delx);
+
+          tjx = torque_common * mu2_dot_rij * (mu[j][1] * delz - mu[j][2] * dely);
+          tjy = torque_common * mu2_dot_rij * (mu[j][2] * delx - mu[j][0] * delz);
+          tjz = torque_common * mu2_dot_rij * (mu[j][0] * dely - mu[j][1] * delx);
         }
-        
+
         // total force and torque accumulation ---
         if (eflag) evdwl = energy;
 
@@ -348,10 +357,8 @@ void PairNematicAlign::compute(int eflag, int vflag)
   if (vflag_fdotr) virial_fdotr_compute();
 }
 
-
-
 double PairNematicAlign::single(int i, int j, int itype, int jtype, double rsq, double factor_coul,
-                               double factor_lj, double &fforce)
+                                double factor_lj, double &fforce)
 {
   // cutoff guard
   double rc = cut[itype][jtype] > 0.0 ? cut[itype][jtype] : cut_global;
@@ -365,21 +372,21 @@ double PairNematicAlign::single(int i, int j, int itype, int jtype, double rsq, 
 
   // WCA repulsion (if enabled)
   if (wca_flag[itype][jtype]) {
-      double lj_s = lj_sigma[itype][jtype];
-      double wca_cut = 1.12246204831 * lj_s;
-      double r = sqrt(rsq);
-      double rinv = 1 / r;
-      if (r < wca_cut) {
-          double lj_e = lj_epsilon[itype][jtype];
-          double sr2 = lj_s * lj_s / rsq;
-          double sr6 = sr2 * sr2 * sr2;
-          double sr12 = sr6 * sr6;
+    double lj_s = lj_sigma[itype][jtype];
+    double wca_cut = 1.12246204831 * lj_s;
+    double r = sqrt(rsq);
+    double rinv = 1 / r;
+    if (r < wca_cut) {
+      double lj_e = lj_epsilon[itype][jtype];
+      double sr2 = lj_s * lj_s / rsq;
+      double sr6 = sr2 * sr2 * sr2;
+      double sr12 = sr6 * sr6;
 
-          wca_force_over_r += 48.0 * lj_e * (sr12 - 0.5 * sr6) * rinv * rinv;
-          energy += 4.0 * lj_e * (sr12 - sr6) + lj_e;
-      }
+      wca_force_over_r += 48.0 * lj_e * (sr12 - 0.5 * sr6) * rinv * rinv;
+      energy += 4.0 * lj_e * (sr12 - sr6) + lj_e;
+    }
   }
 
-fforce = -wca_force_over_r * factor_lj;    // -dU/dr
-return energy * factor_lj;
+  fforce = -wca_force_over_r * factor_lj;    // -dU/dr
+  return energy * factor_lj;
 }
