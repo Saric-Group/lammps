@@ -9,7 +9,12 @@ PairStyle(nematic/align, PairNematicAlign);
 #ifndef LMP_PAIR_NEMATIC_ALIGN_H
 #define LMP_PAIR_NEMATIC_ALIGN_H
 
-#include "pair.h"
+#include "pair.h"    
+#include "fix_backbone_info.h"
+
+class FixBackboneInfo;
+
+  
 
 namespace LAMMPS_NS {
 
@@ -34,6 +39,9 @@ class PairNematicAlign : public Pair {
   int **no_radial_flag;
   double **soft_cut;
   double **soft_eps;
+
+  char *fix_id;
+  FixBackboneInfo *fix_bi;
 
   virtual void allocate();
 };

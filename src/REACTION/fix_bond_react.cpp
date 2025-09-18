@@ -41,6 +41,8 @@ Contributing Author: Jacob Gissinger (jgissing@stevens.edu)
 #include "respa.h"
 #include "update.h"
 #include "variable.h"
+#include "modify.h"
+#include "fix_backbone_info.h"
 
 #include "superpose3d.h"
 
@@ -171,6 +173,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   onemol_xspecial = nullptr;
   twomol_xspecial = nullptr;
   hydrolysis_random = nullptr; // @FelixWodaczek/lifetime
+  post_react_callback_fix_id = nullptr; 
 
   // these group names are reserved for use exclusively by bond/react
   master_group = (char *) "bond_react_MASTER_group";
@@ -231,6 +234,12 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
           lifetime_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
       }
       
+      iarg += 2;
+    }
+    else if (strcmp(arg[iarg], "post_react_callback") == 0) {
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix bond/react command: 'post_react_callback' keyword needs a fix ID");
+      delete [] post_react_callback_fix_id; // delete previous if any
+      post_react_callback_fix_id = utils::strdup(arg[iarg + 1]);
       iarg += 2;
     }
     else if (strcmp(arg[iarg],"react") == 0) {
@@ -742,6 +751,8 @@ FixBondReact::~FixBondReact()
   }
 
   delete reset_mol_ids;
+
+  delete[] post_react_callback_fix_id;
 
   memory->destroy(partner);
   memory->destroy(finalpartner);
@@ -3914,7 +3925,6 @@ void FixBondReact::update_everything()
 
   }
 
-  memory->destroy(update_mega_glove);
   if (rescale_charges_anyflag) memory->destroy(sim_total_charges);
 
   // delete atoms. taken from fix_evaporate. but don't think it needs to be in pre_exchange
@@ -3988,6 +3998,35 @@ void FixBondReact::update_everything()
   int Tdelta_imprp;
   MPI_Allreduce(&delta_imprp,&Tdelta_imprp,1,MPI_INT,MPI_SUM,world);
   atom->nimpropers += Tdelta_imprp;
+
+  // Find the helper fix by its ID
+  if (post_react_callback_fix_id) {
+    int fix_index = modify->find_fix(post_react_callback_fix_id);
+    if (fix_index < 0) {
+      error->all(FLERR, "fix bond/react could not find callback fix ID %s", post_react_callback_fix_id);
+    }
+
+    FixBackboneInfo *fix_bi = dynamic_cast<FixBackboneInfo *>(modify->fix[fix_index]);
+    if (fix_bi == nullptr) {
+      error->all(FLERR, "Fix ID '%s' for post_react_callback is not of style backbone/info", post_react_callback_fix_id);
+    }
+
+    // fix_bi->compute_all_backbone_maps();
+
+    // Loop through all successful reactions and call the local update for each.
+    for (int i = 0; i < update_num_mega; i++) {
+      int current_rxnID = update_mega_glove[0][i];
+      
+      // Get the tags of the two initiator atoms involved in the reaction
+      tagint initiator1_tag = update_mega_glove[ibonding[current_rxnID]][i];
+      tagint initiator2_tag = update_mega_glove[jbonding[current_rxnID]][i];
+
+      // Trigger the local update in the helper fix
+      fix_bi->post_reaction_callback_local(initiator1_tag, initiator2_tag);
+    }
+  }
+
+  memory->destroy(update_mega_glove);
 
   if (ndel && (atom->map_style != Atom::MAP_NONE)) {
     atom->nghost = 0;

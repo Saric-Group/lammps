@@ -1,10 +1,9 @@
 /* ----------------------------------------------------------------------
    Added by @andraz-gnidovec
-   Modified by Google Gemini
 ------------------------------------------------------------------------- */
 
 #include "pair_nematic_align.h"
-
+#include "modify.h"
 #include "atom.h"
 #include "comm.h"
 #include "error.h"
@@ -23,11 +22,15 @@ using namespace LAMMPS_NS;
 PairNematicAlign::PairNematicAlign(LAMMPS *lmp) : Pair(lmp)
 {
   single_enable = 0;
+  fix_id = nullptr;
+  fix_bi = nullptr; // Initialize the fix pointer to null
 }
 
 PairNematicAlign::~PairNematicAlign()
 {
   if (copymode) return;
+
+  delete [] fix_id;
 
   if (allocated) {
     memory->destroy(setflag);
@@ -70,8 +73,25 @@ void PairNematicAlign::allocate()
 
 void PairNematicAlign::settings(int narg, char **arg)
 {
-  if (narg != 1) error->all(FLERR, "Incorrect args for pair_style command");
+  // Must provide at least the global cutoff
+  if (narg < 1) error->all(FLERR, "Incorrect args for pair_style command");
+
+  // The first argument is always the global cutoff
   cut_global = utils::numeric(FLERR, arg[0], false, lmp);
+
+  // Parse optional keywords that follow the cutoff
+  int iarg = 1;
+  while (iarg < narg) {
+    if (strcmp(arg[iarg], "fix") == 0) {
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal pair_style command: 'fix' keyword needs an argument");
+      delete [] fix_id; // delete previous if any
+      fix_id = utils::strdup(arg[iarg + 1]);
+      iarg += 2;
+    } else {
+      error->all(FLERR, "Illegal keyword for pair_style nematic/align");
+    }
+  }
+
   if (allocated) {
     for (int i = 1; i <= atom->ntypes; i++)
       for (int j = i; j <= atom->ntypes; j++)
@@ -162,8 +182,55 @@ void PairNematicAlign::init_style()
   if (!atom->mu_flag || !atom->torque_flag)
     error->all(FLERR, "Pair style 'nematic/align' requires atom attributes mu and torque");
 
+  // Check if the user provided the 'fix' keyword in the script.
+  if (fix_id != nullptr) {
+    // If they did, find the fix and store a pointer to it.
+    int fix_index = modify->find_fix(fix_id);
+    if (fix_index < 0)
+      error->all(FLERR, "Pair style nematic/align could not find the fix ID specified: %s", fix_id);
+
+    // This is a dynamic_cast, a safer way to convert pointer types in C++.
+    // It will return nullptr if the fix is not the correct type.
+    fix_bi = dynamic_cast<FixBackboneInfo *>(modify->fix[fix_index]);
+    if (fix_bi == nullptr)
+      error->all(FLERR, "Fix ID '%s' provided to pair_style nematic/align is not of style backbone/info", fix_id);
+  }
+  // If fix_id is nullptr, we do nothing. fix_bi remains nullptr.
+
   neighbor->add_request(this);
 }
+
+// void PairNematicAlign::init_style()
+// {
+//   if (!atom->mu_flag || !atom->torque_flag)
+//     error->all(FLERR, "Pair style 'nematic/align' requires atom attributes mu and torque");
+
+//   // Default to the global setting
+//   int int_newton_pair = force->newton_pair;
+
+//   if (fix_id != nullptr) {
+//     int fix_index = modify->find_fix(fix_id);
+//     if (fix_index < 0)
+//       error->all(FLERR, "Pair style nematic/align could not find the fix ID specified: %s", fix_id);
+
+//     fix_bi = dynamic_cast<FixBackboneInfo *>(modify->fix[fix_index]);
+//     if (fix_bi == nullptr)
+//       error->all(FLERR, "Fix ID '%s' provided to pair_style nematic/align is not of style backbone/info", fix_id);
+
+//     // CRITICAL: If the fix is active, we are in topological mode. This mode
+//     // breaks the symmetry assumptions required for a "half" neighbor list.
+//     // We MUST request a "full" neighbor list to ensure correctness.
+//     // We do this by temporarily turning off newton_pair for this style's request.
+//     force->newton_pair = 0;
+//   }
+
+//   // This will now request a full neighbor list if force->newton_pair was set to 0,
+//   // or a half list otherwise.
+//   neighbor->add_request(this);
+
+//   // Restore the global setting after the request has been made.
+//   force->newton_pair = int_newton_pair;
+// }
 
 double PairNematicAlign::init_one(int i, int j)
 {
@@ -197,7 +264,6 @@ void PairNematicAlign::compute(int eflag, int vflag)
   int i, j, ii, jj, inum, jnum, itype, jtype;
   double xtmp, ytmp, ztmp, delx, dely, delz, rsq;
   double r, r_over_rcut, rinv;
-  double mu_dot_mu;
   double mu1_dot_rij, mu2_dot_rij;
   double energy, fx, fy, fz;
   double tix, tiy, tiz, tjx, tjy, tjz;
@@ -215,12 +281,14 @@ void PairNematicAlign::compute(int eflag, int vflag)
   int *type = atom->type;
   int nlocal = atom->nlocal;
   int newton_pair = force->newton_pair;
-  int **no_radial_flag = this->no_radial_flag;
+  tagint *tag = atom->tag;
 
   inum = list->inum;
   ilist = list->ilist;
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
+
+  int pair_counter = 0;
 
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
@@ -235,6 +303,26 @@ void PairNematicAlign::compute(int eflag, int vflag)
       j = jlist[jj];
       j &= NEIGHMASK;
 
+      // --- START OF CONDITIONAL LOGIC ---
+
+      if (fix_bi) {
+        tagint tag_i = atom->tag[i]; // Get the TAG of the central atom
+        tagint tag_j = atom->tag[j];
+
+        // Find the map for tag_i
+        auto map_it = fix_bi->backbone_neighbors.find(tag_i);
+        if (map_it == fix_bi->backbone_neighbors.end()) {
+            // This can happen if atom i is a ghost; its map is on another proc
+            continue;
+        }
+        
+        // Now search within the correct map for tag_j
+        const auto& neighbor_map = map_it->second;
+        if (neighbor_map.find(tag_j) == neighbor_map.end()) continue;
+      }
+
+      // --- END OF CONDITIONAL LOGIC ---
+
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];
       delz = ztmp - x[j][2];
@@ -244,6 +332,8 @@ void PairNematicAlign::compute(int eflag, int vflag)
       if (rsq < cutsq[itype][jtype]) {
         r = sqrt(rsq);
         rinv = 1.0 / r;
+
+        pair_counter++;
 
         energy = 0.0;
         fx = 0.0;
@@ -371,6 +461,12 @@ void PairNematicAlign::compute(int eflag, int vflag)
       }
     }
   }
+
+  // if (comm->me == 0) {
+  //   char msg[128];
+  //   snprintf(msg, sizeof(msg), "PairNematicAlign: pair_counter = %d\n", pair_counter);
+  //   error->warning(FLERR, msg);
+  // }
 
   if (vflag_fdotr) virial_fdotr_compute();
 }
