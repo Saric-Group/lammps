@@ -1,3 +1,7 @@
+/* ----------------------------------------------------------------------
+   Added by @andraz-gnidovec
+------------------------------------------------------------------------- */
+
 #ifdef FIX_CLASS
 FixStyle(backbone/info, FixBackboneInfo)
 
@@ -18,14 +22,8 @@ public:
   FixBackboneInfo(class LAMMPS *, int, char **);
   ~FixBackboneInfo() override;
   int setmask() override;
-  // void post_constructor() override; 
-  // void init() override {};
   void init() override;
-
-  // The local update callback called by fix bond/react
-  void post_reaction_callback_local(tagint, tagint);
-
-  // void validate();
+  void pre_force(int) override; // Called every timestep
   
   // The public data structure that the pair style will access
   // For each atom index [i], it stores a map of {neighbor_tag -> distance_in_bonds}

@@ -200,38 +200,6 @@ void PairNematicAlign::init_style()
   neighbor->add_request(this);
 }
 
-// void PairNematicAlign::init_style()
-// {
-//   if (!atom->mu_flag || !atom->torque_flag)
-//     error->all(FLERR, "Pair style 'nematic/align' requires atom attributes mu and torque");
-
-//   // Default to the global setting
-//   int int_newton_pair = force->newton_pair;
-
-//   if (fix_id != nullptr) {
-//     int fix_index = modify->find_fix(fix_id);
-//     if (fix_index < 0)
-//       error->all(FLERR, "Pair style nematic/align could not find the fix ID specified: %s", fix_id);
-
-//     fix_bi = dynamic_cast<FixBackboneInfo *>(modify->fix[fix_index]);
-//     if (fix_bi == nullptr)
-//       error->all(FLERR, "Fix ID '%s' provided to pair_style nematic/align is not of style backbone/info", fix_id);
-
-//     // CRITICAL: If the fix is active, we are in topological mode. This mode
-//     // breaks the symmetry assumptions required for a "half" neighbor list.
-//     // We MUST request a "full" neighbor list to ensure correctness.
-//     // We do this by temporarily turning off newton_pair for this style's request.
-//     force->newton_pair = 0;
-//   }
-
-//   // This will now request a full neighbor list if force->newton_pair was set to 0,
-//   // or a half list otherwise.
-//   neighbor->add_request(this);
-
-//   // Restore the global setting after the request has been made.
-//   force->newton_pair = int_newton_pair;
-// }
-
 double PairNematicAlign::init_one(int i, int j)
 {
   if (!setflag[i][j]) {
@@ -461,12 +429,6 @@ void PairNematicAlign::compute(int eflag, int vflag)
       }
     }
   }
-
-  // if (comm->me == 0) {
-  //   char msg[128];
-  //   snprintf(msg, sizeof(msg), "PairNematicAlign: pair_counter = %d\n", pair_counter);
-  //   error->warning(FLERR, msg);
-  // }
 
   if (vflag_fdotr) virial_fdotr_compute();
 }
