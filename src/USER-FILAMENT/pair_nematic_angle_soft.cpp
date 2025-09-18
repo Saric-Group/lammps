@@ -1,6 +1,5 @@
 /* ----------------------------------------------------------------------
    Added by @andraz-gnidovec
-   Modified by Google Gemini to remove unused parameters
 ------------------------------------------------------------------------- */
 
 #include "pair_nematic_angle_soft.h"

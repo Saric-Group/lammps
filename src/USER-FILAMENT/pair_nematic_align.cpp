@@ -16,6 +16,8 @@
 
 #include <cmath>
 #include <cstring>
+#include <vector>   
+#include <algorithm>
 
 using namespace LAMMPS_NS;
 
@@ -267,29 +269,33 @@ void PairNematicAlign::compute(int eflag, int vflag)
     jlist = firstneigh[i];
     jnum = numneigh[i];
 
+    const std::vector<tagint>* neighbor_vec_for_i = nullptr;
+    if (fix_bi) {
+        tagint tag_i = tag[i];
+        auto map_it = fix_bi->backbone_neighbors.find(tag_i);
+        if (map_it != fix_bi->backbone_neighbors.end()) {
+            neighbor_vec_for_i = &(map_it->second);
+        }
+    }
+
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
       j &= NEIGHMASK;
 
-      // --- START OF CONDITIONAL LOGIC ---
-
       if (fix_bi) {
-        tagint tag_i = atom->tag[i]; // Get the TAG of the central atom
-        tagint tag_j = atom->tag[j];
+        // If atom i has no bonded neighbor list, skip all its interactions.
+        if (!neighbor_vec_for_i) continue;
 
-        // Find the map for tag_i
-        auto map_it = fix_bi->backbone_neighbors.find(tag_i);
-        if (map_it == fix_bi->backbone_neighbors.end()) {
-            // This can happen if atom i is a ghost; its map is on another proc
+        tagint tag_j = tag[j];
+        const auto& vec = *neighbor_vec_for_i;
+
+        auto vec_it = std::find(vec.begin(), vec.end(), tag_j);
+
+        // If tag_j is NOT in the vector, it's not a bonded neighbor.
+        if (vec_it == vec.end()) {
             continue;
         }
-        
-        // Now search within the correct map for tag_j
-        const auto& neighbor_map = map_it->second;
-        if (neighbor_map.find(tag_j) == neighbor_map.end()) continue;
       }
-
-      // --- END OF CONDITIONAL LOGIC ---
 
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];

@@ -12,7 +12,7 @@ FixStyle(backbone/info, FixBackboneInfo)
 
 #include "fix.h"
 #include <vector>
-#include <map>
+#include <unordered_map>
 #include <set>
 
 namespace LAMMPS_NS {
@@ -27,7 +27,7 @@ public:
   
   // The public data structure that the pair style will access
   // For each atom index [i], it stores a map of {neighbor_tag -> distance_in_bonds}
-  std::map<tagint, std::map<tagint, int>> backbone_neighbors;
+  std::unordered_map<tagint, std::vector<tagint>> backbone_neighbors;
   
 
 private:

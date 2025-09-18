@@ -5,11 +5,11 @@
 #include "fix_backbone_info.h"
 #include "atom.h"
 #include "error.h"
-#include "utils.h"
 #include "neighbor.h"
-#include <queue>
+#include "utils.h"
 #include <algorithm>
-
+#include <queue>
+#include <unordered_set>
 
 using namespace LAMMPS_NS;
 
@@ -35,7 +35,6 @@ int FixBackboneInfo::setmask()
   return mask;
 }
 
-
 void FixBackboneInfo::init()
 {
   if (atom->map_style == 0)
@@ -43,20 +42,24 @@ void FixBackboneInfo::init()
   compute_all_backbone_maps();
 }
 
-
+// --- MODIFIED BFS ---
+// This function now populates a vector of tags instead of a map.
 void FixBackboneInfo::run_bfs_from_atom(int start_idx)
 {
   if (start_idx < 0 || start_idx >= atom->nlocal) return;
 
   tagint start_tag = atom->tag[start_idx];
-  backbone_neighbors[start_tag].clear();
+  backbone_neighbors[start_tag].clear();    // Clear the vector for this atom
 
-  std::queue<std::pair<int, int>> q;
-  std::map<int, int> visited;
+  std::queue<std::pair<int, int>> q;    // Pair of {atom_index, distance}
+  std::unordered_set<int> visited;      // Use a hash set for efficient O(1) visited checks
 
+  // Initialize the search
   q.push({start_idx, 0});
-  visited[start_idx] = 0;
-  backbone_neighbors[start_tag][start_tag] = 0;
+  visited.insert(start_idx);
+  // Add the atom to its own neighbor list. This is harmless and simplifies
+  // the pair style logic, which expects to find bonded partners in this list.
+  backbone_neighbors[start_tag].push_back(start_tag);
 
   while (!q.empty()) {
     auto current = q.front();
@@ -64,16 +67,18 @@ void FixBackboneInfo::run_bfs_from_atom(int start_idx)
     int current_idx = current.first;
     int current_dist = current.second;
 
-    if (current_dist == max_dist) continue;
+    if (current_dist >= max_dist) continue;
 
     for (int neighbor_idx : adj[current_idx]) {
+      // Check if the neighbor has been visited
       if (visited.find(neighbor_idx) == visited.end()) {
+        visited.insert(neighbor_idx);    // Mark as visited
+
         tagint neighbor_tag = atom->tag[neighbor_idx];
-        visited[neighbor_idx] = current_dist + 1;
-        backbone_neighbors[start_tag][neighbor_tag] = current_dist + 1;
-        if (neighbor_idx < atom->nlocal) {
-          q.push({neighbor_idx, current_dist + 1});
-        }
+        backbone_neighbors[start_tag].push_back(neighbor_tag);    // Add neighbor tag to vector
+
+        // Only continue the search from local atoms
+        if (neighbor_idx < atom->nlocal) { q.push({neighbor_idx, current_dist + 1}); }
       }
     }
   }
@@ -93,25 +98,18 @@ void FixBackboneInfo::compute_all_backbone_maps()
         // Add the symmetric bond to our internal list
         adj[i].push_back(neighbor_idx);
         // If the neighbor is also local, add the reverse bond too
-        if (neighbor_idx < atom->nlocal) {
-          adj[neighbor_idx].push_back(i);
-        }
+        if (neighbor_idx < atom->nlocal) { adj[neighbor_idx].push_back(i); }
       }
     }
   }
 
   // Run the BFS using guaranteed-symmetric adjacency list.
   backbone_neighbors.clear();
-  for (int i = 0; i < atom->nlocal; ++i) {
-    run_bfs_from_atom(i);
-  }
+  for (int i = 0; i < atom->nlocal; ++i) { run_bfs_from_atom(i); }
 }
-
 
 void FixBackboneInfo::pre_force(int /*vflag*/)
 {
   // We need to recompute the backbone maps if neighbor list was rebuilt
-  if (neighbor->ago == 0) {
-    compute_all_backbone_maps();
-  }
+  if (neighbor->ago == 0) { compute_all_backbone_maps(); }
 }
