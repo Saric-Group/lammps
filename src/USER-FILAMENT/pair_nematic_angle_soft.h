@@ -26,14 +26,22 @@ class PairNematicSoft : public Pair {
   double single(int, int, int, int, double, double, double, double &) override;
   double single_orientation(int, int, double, double, const double *, const double *) override;
 
+  void write_restart(FILE *fp) override;
+  void read_restart(FILE *fp) override;
+
  protected:
   double cut_global;
 
   double **Aamp;
   double **kappa;
   double **theta0;
-  double **c0, **s0, **c0s0, **cos2t0, **c_fac; // cached trig
+  double **c0, **s0; // cached trig
   double **cut;
+
+  int **wca_flag;
+  double **lj_epsilon;
+  double **lj_sigma;
+  double **wca_cutsq;
 
   virtual void allocate();
 };

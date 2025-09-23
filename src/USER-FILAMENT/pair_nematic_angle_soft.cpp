@@ -36,11 +36,14 @@ PairNematicSoft::~PairNematicSoft()
     memory->destroy(theta0);
     memory->destroy(c0);
     memory->destroy(s0);
-    memory->destroy(c0s0);
-    memory->destroy(cos2t0);
     memory->destroy(cut);
     memory->destroy(cutsq);
-    memory->destroy(c_fac);
+
+    // Destroy new WCA arrays
+    memory->destroy(wca_flag);
+    memory->destroy(lj_epsilon);
+    memory->destroy(lj_sigma);
+    memory->destroy(wca_cutsq);
   }
 }
 
@@ -56,14 +59,19 @@ void PairNematicSoft::allocate()
   memory->create(theta0, n + 1, n + 1, "pair:theta0");
   memory->create(c0, n + 1, n + 1, "pair:c0");
   memory->create(s0, n + 1, n + 1, "pair:s0");
-  memory->create(c0s0, n + 1, n + 1, "pair:c0s0");
-  memory->create(cos2t0, n + 1, n + 1, "pair:cos2t0");
   memory->create(cut, n + 1, n + 1, "pair:cut");
   memory->create(cutsq, n + 1, n + 1, "pair:cutsq");
-  memory->create(c_fac, n + 1, n + 1, "pair:c_fac");
+
+  memory->create(wca_flag, n + 1, n + 1, "pair:wca_flag");
+  memory->create(lj_epsilon, n + 1, n + 1, "pair:lj_epsilon");
+  memory->create(lj_sigma, n + 1, n + 1, "pair:lj_sigma");
+  memory->create(wca_cutsq, n + 1, n + 1, "pair:wca_cutsq");
 
   for (int i = 1; i <= n; i++)
-    for (int j = i; j <= n; j++) setflag[i][j] = 0;
+    for (int j = i; j <= n; j++) {
+      setflag[i][j] = 0;
+      wca_flag[i][j] = 0;    // Default to off
+    }
 }
 
 void PairNematicSoft::settings(int narg, char **arg)
@@ -74,8 +82,8 @@ void PairNematicSoft::settings(int narg, char **arg)
 
 void PairNematicSoft::coeff(int narg, char **arg)
 {
-  // Arguments: i j A kappa theta0
-  if (narg != 5)
+  // Arguments: i j A kappa theta0 [wca epsilon sigma]
+  if (narg != 5 && narg != 8)
     error->all(FLERR, "Incorrect args for pair_coeff in nematic/angle/soft");
   if (!allocated) allocate();
 
@@ -87,15 +95,26 @@ void PairNematicSoft::coeff(int narg, char **arg)
   double kappa_one = utils::numeric(FLERR, arg[3], false, lmp);
   double t0_one = utils::numeric(FLERR, arg[4], false, lmp);
 
+  // --- Parse optional WCA arguments ---
+  int wca_flag_one = 0;
+  double lj_epsilon_one = 0.0;
+  double lj_sigma_one = 0.0;
+
+  if (narg == 8) {
+    if (strcmp(arg[5], "wca") != 0)
+      error->all(FLERR, "Expected 'wca' keyword for 8-argument pair_coeff");
+    wca_flag_one = 1;
+    lj_epsilon_one = utils::numeric(FLERR, arg[6], false, lmp);
+    lj_sigma_one = utils::numeric(FLERR, arg[7], false, lmp);
+    if (lj_epsilon_one <= 0.0 || lj_sigma_one <= 0.0)
+      error->all(FLERR, "Invalid epsilon or sigma for WCA potential");
+  }
+
   double cut_one = cut_global;
 
   // cache trig
   double c0_one = cos(t0_one);
   double s0_one = sin(t0_one);
-  double c0s0_one = c0_one * s0_one;
-  double cos2t0_one = c0_one * c0_one - s0_one * s0_one;
-  // canonicalization factor to make minimum of orientational contribution exactly 0.
-  double c_fac_one = 1 / (1.0 + exp(-8.0 * kappa_one * (c0s0_one * c0s0_one)));
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
@@ -105,11 +124,14 @@ void PairNematicSoft::coeff(int narg, char **arg)
       theta0[i][j] = t0_one;
       c0[i][j] = c0_one;
       s0[i][j] = s0_one;
-      c0s0[i][j] = c0s0_one;
-      cos2t0[i][j] = cos2t0_one;
-      c_fac[i][j] = c_fac_one;
       cut[i][j] = cut_one;
       setflag[i][j] = 1;
+
+      // Set WCA params
+      wca_flag[i][j] = wca_flag_one;
+      lj_epsilon[i][j] = lj_epsilon_one;
+      lj_sigma[i][j] = lj_sigma_one;
+
       count++;
     }
   }
@@ -127,7 +149,7 @@ double PairNematicSoft::init_one(int i, int j)
 {
   if (!setflag[i][j]) {
     Aamp[i][j] = kappa[i][j] = theta0[i][j] = 0.0;
-    c0[i][j] = s0[i][j] = c0s0[i][j] = cos2t0[i][j] = c_fac[i][j] = 0.0;
+    c0[i][j] = s0[i][j] = 0.0;
     cut[i][j] = 0.0;
   }
 
@@ -136,15 +158,24 @@ double PairNematicSoft::init_one(int i, int j)
   theta0[j][i] = theta0[i][j];
   c0[j][i] = c0[i][j];
   s0[j][i] = s0[i][j];
-  c0s0[j][i] = c0s0[i][j];
-  cos2t0[j][i] = cos2t0[i][j];
   cut[j][i] = cut[i][j];
-  c_fac[j][i] = c_fac[i][j];
   setflag[j][i] = setflag[i][j];
 
-  return cut[i][j];
-}
+  // Symmetrize WCA params
+  wca_flag[j][i] = wca_flag[i][j];
+  lj_epsilon[j][i] = lj_epsilon[i][j];
+  lj_sigma[j][i] = lj_sigma[i][j];
 
+  // WCA cutoff:
+  double wca_rc = 0.0; 
+  if (wca_flag[i][j]) {
+    wca_rc = lj_sigma[i][j] * 1.122462048309373;
+  }
+  wca_cutsq[i][j] = wca_rc * wca_rc;
+  wca_cutsq[j][i] = wca_cutsq[i][j];
+
+  return MAX(cut[i][j], wca_rc);
+}
 
 void PairNematicSoft::compute(int eflag, int vflag)
 {
@@ -181,61 +212,82 @@ void PairNematicSoft::compute(int eflag, int vflag)
       double delz = ztmp - x[j][2];
       double rsq = delx * delx + dely * dely + delz * delz;
 
-      if (rsq >= cutsq[itype][jtype]) continue;
+      if (rsq >= cutsq[itype][jtype] && rsq >= wca_cutsq[itype][jtype]) continue;
 
-      double r = sqrt(rsq);
-      double rinv = 1.0 / r;
+      double energy = 0.0;
+      double fx = 0.0, fy = 0.0, fz = 0.0;
+      double tau_i_z = 0.0;
 
-      double rc = cut[itype][jtype];
-      double Aij = Aamp[itype][jtype];
-      double kij = kappa[itype][jtype];
-      double c0ij = c0[itype][jtype];
-      double s0ij = s0[itype][jtype];
-      double c0s0ij = c0s0[itype][jtype];
-      double cos2t0ij = cos2t0[itype][jtype];
-      double c_fac_ij = c_fac[itype][jtype];
+      if (wca_flag[itype][jtype] && rsq < wca_cutsq[itype][jtype]) {
+        double sigma = lj_sigma[itype][jtype];
+        double epsilon = lj_epsilon[itype][jtype];
 
-      if (rc <= 0.0) { rc = cut_global; }
-      if (rc <= 0.0) {
-        error->all(FLERR, "Cutoff must be set for pair coefficients in nematic/align");
+        double sr2 = sigma * sigma / rsq;
+        double sr6 = sr2 * sr2 * sr2;
+        double sr12 = sr6 * sr6;
+
+        if (eflag) energy += 4.0 * epsilon * (sr12 - sr6) + epsilon;
+
+        double f_over_r = 24.0 * epsilon * (2.0 * sr12 - sr6) / rsq;
+        fx += f_over_r * delx;
+        fy += f_over_r * dely;
+        fz += f_over_r * delz;
       }
 
-      // assume mu vectors are unit and in-plane (xy)
-      double c = mu[i][0] * mu[j][0] + mu[i][1] * mu[j][1];
-      // z-component of cross (2D signed sine)
-      double s = mu[i][0] * mu[j][1] - mu[i][1] * mu[j][0];
+      if (rsq < cutsq[itype][jtype]) {
 
-      double a = s * c0ij;
-      double b = c * s0ij;
-      double sm = a - b;
-      double sp = a + b;
+        double r = sqrt(rsq);
+        double rinv = 1.0 / r;
 
-      double em = exp(-2.0 * kij * sm * sm);
-      double ep = exp(-2.0 * kij * sp * sp);
+        double rc = cut[itype][jtype];
+        double Aij = Aamp[itype][jtype];
+        double kij = kappa[itype][jtype];
+        double c0ij = c0[itype][jtype];
+        double s0ij = s0[itype][jtype];
 
-      double Uang = (1.0 - em) * (1.0 - ep);
+        if (rc <= 0.0) { rc = cut_global; }
+        if (rc <= 0.0) {
+          error->all(FLERR, "Cutoff must be set for pair coefficients in nematic/align");
+        }
 
-      // soft radial factor and derivative
-      // S(r) = A [1 + cos(pi r / rc)] for r < rc
-      double xarg = M_PI * r / rc;
-      double Sr = Aij * (1.0 + cos(xarg));
-      double dSdr = -Aij * (M_PI / rc) * sin(xarg);
+        // assume mu vectors are unit and in-plane (xy)
+        double c = mu[i][0] * mu[j][0] + mu[i][1] * mu[j][1];
+        // z-component of cross (2D signed sine)
+        double s = mu[i][0] * mu[j][1] - mu[i][1] * mu[j][0];
 
-      // F = -dU/dr * rhat = -dS/dr * Uang * rhat
-      double f_over_r = (-dSdr * Uang) * rinv;
-      double fx = f_over_r * delx;
-      double fy = f_over_r * dely;
-      double fz = f_over_r * delz;
+        double a = s * c0ij;
+        double b = c * s0ij;
+        double sm = a - b;
+        double sp = a + b;
 
-      // torque from angular derivative: dU/dθ
-      double cm = c * c0ij + s * s0ij;
-      double cp = c * c0ij - s * s0ij;
-      double dfm = 4.0 * kij * em * sm * cm;
-      double dfp = 4.0 * kij * ep * sp * cp;
-      double dUang_dtheta = dfm * (1.0 - ep) + (1.0 - em) * dfp;
+        double em = exp(-2.0 * kij * sm * sm);
+        double ep = exp(-2.0 * kij * sp * sp);
 
-      double tau_i_z = Sr * dUang_dtheta;
-      double tau_j_z = -Sr * dUang_dtheta;
+        double Uang = (1.0 - em) * (1.0 - ep);
+
+        // soft radial factor and derivative
+        // S(r) = A [1 + cos(pi r / rc)] for r < rc
+        double xarg = M_PI * r / rc;
+        double Sr = Aij * (1.0 + cos(xarg));
+        double dSdr = -Aij * (M_PI / rc) * sin(xarg);
+
+        if (eflag) energy += Sr * Uang;
+
+        // F = -dU/dr * rhat = -dS/dr * Uang * rhat
+        double f_over_r = (-dSdr * Uang) * rinv;
+        fx += f_over_r * delx;
+        fy += f_over_r * dely;
+        fz += f_over_r * delz;
+
+        // torque from angular derivative: dU/dθ
+        double cm = c * c0ij + s * s0ij;
+        double cp = c * c0ij - s * s0ij;
+        double dfm = 4.0 * kij * em * sm * cm;
+        double dfp = 4.0 * kij * ep * sp * cp;
+        double dUang_dtheta = dfm * (1.0 - ep) + (1.0 - em) * dfp;
+
+        tau_i_z = Sr * dUang_dtheta;
+      }
 
       f[i][0] += fx;
       f[i][1] += fy;
@@ -246,12 +298,11 @@ void PairNematicSoft::compute(int eflag, int vflag)
         f[j][0] -= fx;
         f[j][1] -= fy;
         f[j][2] -= fz;
-        torque[j][2] += tau_j_z;
+        torque[j][2] -= tau_i_z;
       }
 
-      double evdwl = 0.0;
-      if (eflag) evdwl = Sr * Uang;
-      if (evflag) ev_tally_xyz(i, j, nlocal, newton_pair, evdwl, 0.0, fx, fy, fz, delx, dely, delz);
+      if (evflag)
+        ev_tally_xyz(i, j, nlocal, newton_pair, energy, 0.0, fx, fy, fz, delx, dely, delz);
     }
   }
 
@@ -268,52 +319,129 @@ double PairNematicSoft::single(int i, int j, int itype, int jtype, double rsq, d
     return 0.0;
   }
 
+  double energy = 0.0;
+  fforce = 0.0;
+
+  // WCA contribution
+  if (wca_flag[itype][jtype] && rsq < wca_cutsq[itype][jtype]) {
+    double sigma = lj_sigma[itype][jtype];
+    double epsilon = lj_epsilon[itype][jtype];
+
+    double sr2 = sigma * sigma / rsq;
+    double sr6 = sr2 * sr2 * sr2;
+    double sr12 = sr6 * sr6;
+
+    energy += 4.0 * epsilon * (sr12 - sr6) + epsilon;
+    fforce += 24.0 * epsilon * (2.0 * sr12 - sr6) / sqrt(rsq);
+  }
+
   double Aij = Aamp[itype][jtype];
   double kij = kappa[itype][jtype];
-  double c0ij = c0[itype][jtype];
-  double s0ij = s0[itype][jtype];
-  double c0s0ij = c0s0[itype][jtype];
-  double c_fac_ij = c_fac[itype][jtype];
 
   double r = sqrt(rsq);
   double xarg = M_PI * r / rc;
   double Sr = Aij * (1.0 + cos(xarg));
-  double dSdr = -Aij * (M_PI / rc) * sin(xarg) /
-      r;    // this is divided by r also in og pair_soft implementation
+  double dSdr = -Aij * (M_PI / rc) * sin(xarg) / r;
+  // this is divided by r also in og pair_soft implementation
 
-  double energy = Sr;
-  fforce = -dSdr * factor_lj;    // -dU/dr
-  return energy * factor_lj;
+  energy += Sr;
+  fforce += -dSdr;    // -dU/dr
+
+  energy *= factor_lj;
+  fforce *= factor_lj;
+
+  return energy;
 }
 
 double PairNematicSoft::single_orientation(int itype, int jtype, double rsq, double factor_lj,
                                            const double *mu_i, const double *mu_j)
 {
+
+  double energy = 0.0;
+
+  if (wca_flag[itype][jtype] && rsq < wca_cutsq[itype][jtype]) {
+    double sigma = lj_sigma[itype][jtype];
+    double epsilon = lj_epsilon[itype][jtype];
+
+    double sr2 = sigma * sigma / rsq;
+    double sr6 = sr2 * sr2 * sr2;
+    double sr12 = sr6 * sr6;
+
+    energy += 4.0 * epsilon * (sr12 - sr6) + epsilon;
+  }
+
   double rc = cut[itype][jtype] > 0.0 ? cut[itype][jtype] : cut_global;
-  if (rc <= 0.0 || rsq >= rc * rc || factor_lj == 0.0) { return 0.0; }
 
-  double Aij = Aamp[itype][jtype];
-  double kij = kappa[itype][jtype];
-  double c0ij = c0[itype][jtype];
-  double s0ij = s0[itype][jtype];
-  double c0s0ij = c0s0[itype][jtype];
-  double c_fac_ij = c_fac[itype][jtype];
+  if (rc > 0.0 && rsq < rc * rc) {
+    double Aij = Aamp[itype][jtype];
+    double kij = kappa[itype][jtype];
+    double c0ij = c0[itype][jtype];
+    double s0ij = s0[itype][jtype];
 
-  double c = mu_i[0] * mu_j[0] + mu_i[1] * mu_j[1];
-  double s = mu_i[0] * mu_j[1] - mu_i[1] * mu_j[0];
-  double sp = s * c0ij + c * s0ij;
-  double sm = s * c0ij - c * s0ij;
+    double c = mu_i[0] * mu_j[0] + mu_i[1] * mu_j[1];
+    double s = mu_i[0] * mu_j[1] - mu_i[1] * mu_j[0];
+    double sp = s * c0ij + c * s0ij;
+    double sm = s * c0ij - c * s0ij;
 
-  double ep = exp(-2.0 * kij * sp * sp);
-  double em = exp(-2.0 * kij * sm * sm);
+    double ep = exp(-2.0 * kij * sp * sp);
+    double em = exp(-2.0 * kij * sm * sm);
 
-  double Uang = (1.0 - ep); // * (1.0 - em);
+    double Uang = (1.0 - ep);    // * (1.0 - em);
 
-  double r = sqrt(rsq);
-  double xarg = M_PI * r / rc;
-  double Sr = Aij * (1.0 + cos(xarg));
+    double r = sqrt(rsq);
+    double xarg = M_PI * r / rc;
+    double Sr = Aij * (1.0 + cos(xarg));
 
-  double energy = Sr * Uang;
-  // double energy = 0.0;
+    energy += Sr * Uang;
+  }
+
   return energy * factor_lj;
+}
+
+void PairNematicSoft::write_restart(FILE *fp)
+{
+  Pair::write_restart(fp);
+
+  fwrite(&cut_global, sizeof(double), 1, fp);
+
+  int n = atom->ntypes;
+  for (int i = 1; i <= n; i++) {
+    for (int j = i; j <= n; j++) {
+      fwrite(&setflag[i][j], sizeof(int), 1, fp);
+      if (setflag[i][j]) {
+        fwrite(&Aamp[i][j], sizeof(double), 1, fp);
+        fwrite(&kappa[i][j], sizeof(double), 1, fp);
+        fwrite(&theta0[i][j], sizeof(double), 1, fp);
+        fwrite(&cut[i][j], sizeof(double), 1, fp);
+        fwrite(&wca_flag[i][j], sizeof(int), 1, fp);
+        fwrite(&lj_epsilon[i][j], sizeof(double), 1, fp);
+        fwrite(&lj_sigma[i][j], sizeof(double), 1, fp);
+      }
+    }
+  }
+}
+
+void PairNematicSoft::read_restart(FILE *fp)
+{
+  Pair::read_restart(fp);
+
+  allocate();
+
+  fread(&cut_global, sizeof(double), 1, fp);
+
+  int n = atom->ntypes;
+  for (int i = 1; i <= n; i++) {
+    for (int j = i; j <= n; j++) {
+      fread(&setflag[i][j], sizeof(int), 1, fp);
+      if (setflag[i][j]) {
+        fread(&Aamp[i][j], sizeof(double), 1, fp);
+        fread(&kappa[i][j], sizeof(double), 1, fp);
+        fread(&theta0[i][j], sizeof(double), 1, fp);
+        fread(&cut[i][j], sizeof(double), 1, fp);
+        fread(&wca_flag[i][j], sizeof(int), 1, fp);
+        fread(&lj_epsilon[i][j], sizeof(double), 1, fp);
+        fread(&lj_sigma[i][j], sizeof(double), 1, fp);
+      }
+    }
+  }
 }
