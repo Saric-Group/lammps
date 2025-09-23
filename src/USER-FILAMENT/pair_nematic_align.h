@@ -30,6 +30,9 @@ class PairNematicAlign : public Pair {
   double init_one(int, int) override;
   // double single(int, int, int, int, double, double, double, double &) override;
 
+  void write_restart(FILE *fp) override;
+  void read_restart(FILE *fp) override;
+
  protected:
   double cut_global;
   double **epsilon;

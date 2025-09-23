@@ -439,6 +439,68 @@ void PairNematicAlign::compute(int eflag, int vflag)
   if (vflag_fdotr) virial_fdotr_compute();
 }
 
+
+void PairNematicAlign::write_restart(FILE *fp)
+{
+  Pair::write_restart(fp);
+
+  fwrite(&cut_global, sizeof(double), 1, fp);
+
+  int len = (fix_id) ? strlen(fix_id) + 1 : 0;
+  fwrite(&len, sizeof(int), 1, fp);
+  if (len > 0) {
+    fwrite(fix_id, sizeof(char), len, fp);
+  }
+
+  int n = atom->ntypes;
+  for (int i = 1; i <= n; i++) {
+    for (int j = i; j <= n; j++) {
+      fwrite(&setflag[i][j], sizeof(int), 1, fp);
+      fwrite(&epsilon[i][j], sizeof(double), 1, fp);
+      fwrite(&cut[i][j], sizeof(double), 1, fp);
+      fwrite(&soft_repulsion_flag[i][j], sizeof(int), 1, fp);
+      fwrite(&soft_cut[i][j], sizeof(double), 1, fp);
+      fwrite(&soft_eps[i][j], sizeof(double), 1, fp);
+      fwrite(&no_radial_flag[i][j], sizeof(int), 1, fp);
+    }
+  }
+}
+
+
+void PairNematicAlign::read_restart(FILE *fp)
+{
+  Pair::read_restart(fp);
+
+  allocate();
+
+  fread(&cut_global, sizeof(double), 1, fp);
+
+  int len;
+  fread(&len, sizeof(int), 1, fp);
+  if (len > 0) {
+    delete [] fix_id; // delete any pre-existing string
+    fix_id = new char[len];
+    fread(fix_id, sizeof(char), len, fp);
+  } else {
+    delete [] fix_id;
+    fix_id = nullptr;
+  }
+
+  int n = atom->ntypes;
+  for (int i = 1; i <= n; i++) {
+    for (int j = i; j <= n; j++) {
+      fread(&setflag[i][j], sizeof(int), 1, fp);
+      fread(&epsilon[i][j], sizeof(double), 1, fp);
+      fread(&cut[i][j], sizeof(double), 1, fp);
+      fread(&soft_repulsion_flag[i][j], sizeof(int), 1, fp);
+      fread(&soft_cut[i][j], sizeof(double), 1, fp);
+      fread(&soft_eps[i][j], sizeof(double), 1, fp);
+      fread(&no_radial_flag[i][j], sizeof(int), 1, fp);
+    }
+  }
+}
+
+
 // double PairNematicAlign::single(int i, int j, int itype, int jtype, double rsq, double factor_coul,
 //                                 double factor_lj, double &fforce)
 // {
