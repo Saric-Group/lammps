@@ -86,6 +86,8 @@ class FixBondReact : public Fix {
   double *modify_create_nuccyl_rad; // added for cylinder nucleation
   double *modify_create_nuccyl_mod; // added for cylinder nucleation
   double *overlapsq;
+  double *overlap_factor;      //@andraz-gnidovec: stores the scaling factor for checking overlaps between spherical particles
+  int *overlap_mode;
   int *molecule_keyword;
   int maxnconstraints;
   int *nconstraints;

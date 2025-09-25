@@ -118,6 +118,9 @@ enum { OFF, INTER, INTRA };
 // values for lifetime_flag
 enum { LIFETIME_OFF, LIFETIME_ON, LIFETIME_HYDROLYSIS };
 
+// values for the overlap check mode
+enum { OVERLAP_OFF, OVERLAP_DISTANCE, OVERLAP_SCALE };
+
 /* ---------------------------------------------------------------------- */
 // clang-format off
 
@@ -270,6 +273,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(modify_create_nuccyl_rad,nreacts,"bond/react:modify_create_nuccyl_rad"); // added for cylinder nucleation
   memory->create(modify_create_nuccyl_mod,nreacts,"bond/react:modify_create_nuccyl_mod"); // added for cylinder nucleation
   memory->create(overlapsq,nreacts,"bond/react:overlapsq");
+  memory->create(overlap_factor,nreacts,"bond/react:overlap_factor");
+  memory->create(overlap_mode,nreacts,"bond/react:overlap_mode");
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
   memory->create(energy_check_flag, nreacts, "bond/react:energy_check_flag");  // @andraz-gnidovec: flag for energy check keyword
   memory->create(energy_temp, nreacts, "bond/react:energy_temp");
@@ -304,6 +309,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     modify_create_nuccyl_rad[i] = -1; // added for cylinder nucleation
     modify_create_nuccyl_mod[i] = -1; // added for cylinder nucleation
     overlapsq[i] = 0.0;
+    overlap_factor[i] = 0.0;
+    overlap_mode[i] = OVERLAP_OFF;
     molecule_keyword[i] = OFF;
     energy_check_flag[i] = 0;   // Default to off
     energy_temp[i] = 0.0;
@@ -506,9 +513,28 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
           } else if (strcmp(arg[iarg],"overlap") == 0) {
             if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                           "'modify_create' has too few arguments");
-            overlapsq[rxn] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
-            overlapsq[rxn] *= overlapsq[rxn];
-            iarg += 2;
+            if (strcmp(arg[iarg+1], "scale") == 0) {
+              // radius based method
+              overlap_mode[rxn] = OVERLAP_SCALE;
+              
+              if (!atom->radius)
+                error->all(FLERR,"The 'overlap scale' option requires atom_style sphere");
+              if (iarg+3 > narg) error->all(FLERR,"Illegal fix bond/react command: "
+                                            "'overlap scale' is missing a factor argument");
+
+              overlap_factor[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp);
+              
+              // if (!atom->molecules[reacted_mol[rxn]]->radiusflag)
+              //   error->all(FLERR,"Molecule template for reaction must have a 'Diameters' section when using 'overlap scale'");
+              
+              iarg += 3; // Advance past "overlap", "scale", and <factor>
+
+            } else {
+              overlap_mode[rxn] = OVERLAP_DISTANCE;
+              overlapsq[rxn] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
+              overlapsq[rxn] *= overlapsq[rxn];
+              iarg += 2;
+            }
           } else break;
         }
       } else error->all(FLERR,"Illegal fix bond/react command: unknown keyword");
@@ -788,6 +814,8 @@ FixBondReact::~FixBondReact()
   memory->destroy(modify_create_nuccyl_rad); // added for cylinder nucleation
   memory->destroy(modify_create_nuccyl_mod); // added for cylinder nucleation
   memory->destroy(overlapsq);
+  memory->destroy(overlap_factor);
+  memory->destroy(overlap_mode);
   memory->destroy(energy_check_flag);
   memory->destroy(energy_temp);
 
@@ -4235,17 +4263,31 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   bool overlap_failed = false;
 
   // if enabled, first perform overlap check 
-  if (overlapsq[rxnID] > 0.0) {
+if (overlap_mode[rxnID] != OVERLAP_OFF) {
+    // Loop over each potential new atom defined in the template
     for (int m = 0; m < twomol->natoms; m++) {
       if (create_atoms[m][rxnID] == 1) {
         // check against all existing local and ghost atoms
         for (int i = 0; i < atom->nlocal + atom->nghost; i++) {
+          double cutoff_sq;
+          if (overlap_mode[rxnID] == OVERLAP_SCALE) {
+            // New radius-based method
+            // double new_atom_radius = atom->molecules[reacted_mol[rxnID]]->radius[m];
+            double new_atom_radius = 0.5;
+            double existing_atom_radius = atom->radius[i];
+            double cutoff_dist = (new_atom_radius + existing_atom_radius) * overlap_factor[rxnID];
+            cutoff_sq = cutoff_dist * cutoff_dist;
+          } else {
+            // Old fixed-distance method
+            cutoff_sq = overlapsq[rxnID];
+          }
+
           delx = coords[m][0] - x[i][0];
           dely = coords[m][1] - x[i][1];
           delz = coords[m][2] - x[i][2];
           domain->minimum_image(FLERR, delx,dely,delz);
           rsq = delx*delx + dely*dely + delz*delz;
-          if (rsq < overlapsq[rxnID]) {
+          if (rsq < cutoff_sq) {
             overlap_failed = true;
             break;
           }
@@ -4255,12 +4297,26 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         // check against other newly created atoms in this same reaction event
         for (int m2 = 0; m2 < m; m2++) {
           if (create_atoms[m2][rxnID] == 1) {
+            double cutoff_sq;
+            if (overlap_mode[rxnID] == OVERLAP_SCALE) {
+              // New radius-based method
+              // double new_atom1_radius = atom->molecules[reacted_mol[rxnID]]->radius[m];
+              // double new_atom2_radius = atom->molecules[reacted_mol[rxnID]]->radius[m2];
+              double new_atom1_radius = 0.5;
+              double new_atom2_radius = 0.5;
+              double cutoff_dist = (new_atom1_radius + new_atom2_radius) * overlap_factor[rxnID];
+              cutoff_sq = cutoff_dist * cutoff_dist;
+            } else {
+              // Old fixed-distance method
+              cutoff_sq = overlapsq[rxnID];
+            }
+
             delx = coords[m][0] - coords[m2][0];
             dely = coords[m][1] - coords[m2][1];
             delz = coords[m][2] - coords[m2][2];
             domain->minimum_image(FLERR, delx,dely,delz);
             rsq = delx*delx + dely*dely + delz*delz;
-            if (rsq < overlapsq[rxnID]) {
+            if (rsq < cutoff_sq) {
               overlap_failed = true;
               break;
             }
@@ -4274,7 +4330,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   // decide whether to abort, perform Metropolis check, or accept
   // energy calculation is required if overlap failed and an energy check is available to rescue it
   // or if overlap check is disabled but energy check is enabled
-  if ((overlap_failed && energy_check_flag[rxnID]) || (overlapsq[rxnID] == 0.0 && energy_check_flag[rxnID])) {
+  if ((overlap_failed && energy_check_flag[rxnID]) || (overlap_mode[rxnID] == OVERLAP_OFF && energy_check_flag[rxnID])) {
       double fforce;  // dummy variable required by force signature
       double E_new_vs_old = 0.0, E_new_vs_new = 0.0;
       
