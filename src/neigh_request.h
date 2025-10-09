@@ -142,6 +142,7 @@ class NeighRequest : protected Pointers {
   void set_kokkos_host(int);
   void set_skip(int *, int **);
   void set_molskip(int);
+  void set_addlip();
   void enable_full();
   void enable_ghost();
   void enable_intel();
