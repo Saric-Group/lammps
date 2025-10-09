@@ -68,6 +68,8 @@ class FixBondReact : public Fix {
   tagint lastcheck;
   int stabilization_flag;
   RESET_MOL_IDS molid_mode;
+  int lifetime_flag; // @FelixWodaczek/lifetime flag for lifetime keyword
+  int hydrolysis_seed; // @FelixWodaczek/lifetime seed for hydrolysis keyword
   int custom_exclude_flag;
   int **rate_limit;
   int **store_rxn_count;
@@ -78,6 +80,9 @@ class FixBondReact : public Fix {
   double *mol_total_charge;    // sum of charges of post-reaction atoms whose charges are updated
   int *create_atoms_flag;
   int *modify_create_fragid;
+  int *modify_create_nucrand;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+  double *modify_create_nuccyl_rad; // added for cylinder nucleation
+  double *modify_create_nuccyl_mod; // added for cylinder nucleation
   double *overlapsq;
   int *molecule_keyword;
   int maxnconstraints;
@@ -112,8 +117,11 @@ class FixBondReact : public Fix {
   Fix *fix2;                   // properties/atom used to indicate 1) relaxing atoms
                                //                                  2) to which 'react' atom belongs
   Fix *fix3;                   // property/atom used for system-wide thermostat
+  Fix *fix_lifetime;           // @FelixWodaczek/lifetime fix for atom/property i_creation_times
+  Fix *fix_hydrolysis;         // @FelixWodaczek/lifetime fix for atom/property d_hydrolysis_rn
   class RanMars **random;      // random number for 'prob' keyword
   class RanMars **rrhandom;    // random number for Arrhenius constraint
+  class RanMars *hydrolysis_random; // @FelixWodaczek/lifetime random number for hydrolysis keyword
   class NeighList *list;
   class ResetAtomsMol *reset_mol_ids;    // class for resetting mol IDs
 
@@ -122,7 +130,9 @@ class FixBondReact : public Fix {
   char *nve_limit_xmax;    // indicates max distance allowed to move when relaxing
   char *id_fix1;           // id of internally created fix nve/limit
   char *id_fix2;           // id of internally created fix per-atom properties
-  char *id_fix3;           // id of internally created 'stabilization group' per-atom property fix
+  char *id_fix3;           // id of internally created 'stabilization group' per-atom property fix      
+  char *id_lifetime_fix;   // @FelixWodaczek/lifetime id of internally created fix for lifetime keyword
+  char *id_hydrolysis_fix; // @FelixWodaczek/lifetime id of internally created fix for hydrolysis keyword
   char *statted_id;        // name of 'stabilization group' per-atom property
   char *master_group;      // group containing relaxing atoms from all fix rxns
   char *exclude_group;     // group for system-wide thermostat
@@ -207,6 +217,7 @@ class FixBondReact : public Fix {
                      const std::string &);    // eval rxn_sum and rxn_ave
   void get_atoms2bond(int);
   int get_chirality(double[12]);              // get handedness given an ordered set of coordinates
+  int random_orientation_cylinder(int, double*, double*);
 
   void open(char *);
   void readline(char *);

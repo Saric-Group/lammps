@@ -115,6 +115,9 @@ enum { LOCAL, GLOBAL };
 // values for molecule_keyword
 enum { OFF, INTER, INTRA };
 
+// values for lifetime_flag
+enum { LIFETIME_OFF, LIFETIME_ON, LIFETIME_HYDROLYSIS };
+
 /* ---------------------------------------------------------------------- */
 // clang-format off
 
@@ -146,7 +149,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   status = PROCEED;
 
   // reaction functions used by 'custom' constraint
-  nrxnfunction = 3;
+  nrxnfunction = 4;
   rxnfunclist.resize(nrxnfunction);
   peratomflag.resize(nrxnfunction);
   rxnfunclist[0] = "rxnsum";
@@ -155,6 +158,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   peratomflag[1] = 1;
   rxnfunclist[2] = "rxnbond";
   peratomflag[2] = 0;
+  rxnfunclist[3] = "rxndiffIvan";
+  peratomflag[3] = 1;
   nvvec = 0;
   ncustomvars = 0;
   vvec = nullptr;
@@ -165,6 +170,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   xspecial = nullptr;
   onemol_xspecial = nullptr;
   twomol_xspecial = nullptr;
+  hydrolysis_random = nullptr; // @FelixWodaczek/lifetime
 
   // these group names are reserved for use exclusively by bond/react
   master_group = (char *) "bond_react_MASTER_group";
@@ -191,7 +197,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   int iarg = 3;
   stabilization_flag = 0;
   molid_mode = RESET_MOL_IDS::YES;
-  int num_common_keywords = 2;
+  lifetime_flag = 0;
+  int num_common_keywords = 3; // @FelixWodaczek/lifetime changed from 2 to 3
   for (int m = 0; m < num_common_keywords; m++) {
     if (strcmp(arg[iarg],"stabilization") == 0) {
       if (iarg+2 > narg) utils::missing_cmd_args(FLERR,"fix bond/react stabilization", error);
@@ -211,7 +218,22 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
       else if (str == "molmap") molid_mode = RESET_MOL_IDS::MOLMAP;
       else error->all(FLERR, iarg+1, "Unknown option {} for 'reset_mol_ids' keyword", str);
       iarg += 2;
-    } else if (strcmp(arg[iarg],"react") == 0) {
+    } else if (strcmp(arg[iarg], "lifetime") == 0) {
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix bond/react command: "
+                                    "'lifetime' keyword has too few arguments");
+      
+      if (strcmp(arg[iarg+1], "hydrolysis") == 0) {
+          lifetime_flag = LIFETIME_HYDROLYSIS;
+          hydrolysis_seed = utils::inumeric(FLERR, arg[iarg + 2], false, lmp);
+          iarg += 1;
+          // error->all(FLERR, "fix bond/react: Explicit hydrolysis is not part of fix bond/react yet.");
+      } else {
+          lifetime_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
+      }
+      
+      iarg += 2;
+    }
+    else if (strcmp(arg[iarg],"react") == 0) {
       break;
     } else error->all(FLERR, iarg, "Unknown fix bond/react command keyword {}", arg[iarg]);
   }
@@ -244,6 +266,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(rescale_charges_flag,nreacts,"bond/react:rescale_charges_flag");
   memory->create(create_atoms_flag,nreacts,"bond/react:create_atoms_flag");
   memory->create(modify_create_fragid,nreacts,"bond/react:modify_create_fragid");
+  memory->create(modify_create_nucrand,nreacts,"bond/react:modify_create_nucrand");          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+  memory->create(modify_create_nuccyl_rad,nreacts,"bond/react:modify_create_nuccyl_rad"); // added for cylinder nucleation
+  memory->create(modify_create_nuccyl_mod,nreacts,"bond/react:modify_create_nuccyl_mod"); // added for cylinder nucleation
   memory->create(overlapsq,nreacts,"bond/react:overlapsq");
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
   memory->create(nconstraints,nreacts,"bond/react:nconstraints");
@@ -273,6 +298,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     rescale_charges_flag[i] = 0;
     create_atoms_flag[i] = 0;
     modify_create_fragid[i] = -1;
+    modify_create_nucrand[i] = -1;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+    modify_create_nuccyl_rad[i] = -1; // added for cylinder nucleation
+    modify_create_nuccyl_mod[i] = -1; // added for cylinder nucleation
     overlapsq[i] = 0.0;
     molecule_keyword[i] = OFF;
     nconstraints[i] = 0;
@@ -433,6 +461,30 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
                                                              "'modify_create' keyword does not exist");
             }
             iarg += 2;
+          } else if (strcmp(arg[iarg],"nuc") == 0) {                                                // Adding a flag "nuc" to nucleate the new dimer in a random position within the box, independent of the position of the nucleator - Chris 22/02/2023
+            if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
+                                          "'modify_create' has too few arguments");
+            if (strcmp(arg[iarg+1],"no") == 0) modify_create_nucrand[rxn] = -1; //default
+            else if (strcmp(arg[iarg+1],"yes") == 0) modify_create_nucrand[rxn] = 1; // random orientation
+            else if (strcmp(arg[iarg+1],"xor") == 0) modify_create_nucrand[rxn] = 0; // positive orientation in X
+            else if (strcmp(arg[iarg+1],"mod") == 0) {
+              // error->all(FLERR, "Command 'mod' has been deactivated.");
+              modify_create_nucrand[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
+              iarg += 1;
+            }
+            else if (strcmp(arg[iarg+1], "cylinder") == 0){
+              // nuc cylinder (mod width) radius
+              if (strcmp(arg[iarg+2], "mod") == 0) {
+                modify_create_nuccyl_mod[rxn] =  utils::numeric(FLERR,arg[iarg+3],false,lmp); // positive orientation in X
+                iarg += 2; // mod + width
+              }
+              else {
+                modify_create_nuccyl_mod[rxn] = -1; // random orientation within a cylinder of radius R
+              }
+              modify_create_nuccyl_rad[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp);; // random orientation within a cylinder of radius R
+              iarg += 1; // radius
+            }
+            iarg += 2; // nuc + cylinder
           } else if (strcmp(arg[iarg],"overlap") == 0) {
             if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                           "'modify_create' has too few arguments");
@@ -642,6 +694,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   id_fix1 = nullptr;
   id_fix2 = nullptr;
   id_fix3 = nullptr;
+  id_lifetime_fix = utils::strdup("bond_react_lifetime"); // @FelixWodaczek/lifetime
+  id_hydrolysis_fix = utils::strdup("bond_react_hydrolysis"); // @FelixWodaczek/lifetime
+
   statted_id = nullptr;
   custom_exclude_flag = 0;
 
@@ -663,6 +718,11 @@ FixBondReact::~FixBondReact()
     delete random[i];
   }
   delete[] random;
+
+  if (hydrolysis_random != nullptr) {
+    delete hydrolysis_random;
+    hydrolysis_random = nullptr;
+  }
 
   delete reset_mol_ids;
 
@@ -707,6 +767,9 @@ FixBondReact::~FixBondReact()
   memory->destroy(constraintstr);
   memory->destroy(create_atoms_flag);
   memory->destroy(modify_create_fragid);
+  memory->destroy(modify_create_nucrand);          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+  memory->destroy(modify_create_nuccyl_rad); // added for cylinder nucleation
+  memory->destroy(modify_create_nuccyl_mod); // added for cylinder nucleation
   memory->destroy(overlapsq);
 
   memory->destroy(iatomtype);
@@ -743,6 +806,12 @@ FixBondReact::~FixBondReact()
 
   if (id_fix2 && modify->get_fix_by_id(id_fix2)) modify->delete_fix(id_fix2);
   delete[] id_fix2;
+
+  // @FelixWodaczek/lifetime delete lifetime fix if not already deleted
+  if (id_lifetime_fix != nullptr && modify->get_fix_by_id(id_lifetime_fix)) modify->delete_fix(id_lifetime_fix);
+  if (id_hydrolysis_fix != nullptr && modify->get_fix_by_id(id_hydrolysis_fix)) modify->delete_fix(id_hydrolysis_fix);
+  delete[] id_lifetime_fix;
+  delete[] id_hydrolysis_fix;
 
   delete[] statted_id;
   delete[] guess_branch;
@@ -857,6 +926,37 @@ void FixBondReact::post_constructor()
     if (!modify->get_fix_by_id(id_fix1))
       fix1 = modify->add_fix(fmt::format("{} {} nve/limit  {}",
                                          id_fix1,master_group,nve_limit_xmax));
+  }
+
+  // @FelixWodaczek/lifetime handle lifetime flag here
+  if (lifetime_flag != LIFETIME_OFF) {
+    // create an atom property to store the lifetime of atoms
+    if (!modify->get_fix_by_id(id_lifetime_fix)) {
+      fix_lifetime = modify->add_fix(std::string(id_lifetime_fix) +
+                                     " all property/atom i_creation_steps ghost yes");
+      
+      // initialize per-atom creation_steps to step 0
+      int flag,cols;
+      int ct_index = atom->find_custom("creation_steps",flag,cols);
+      int *i_creation_steps = atom->ivector[ct_index];
+      for (int i = 0; i < atom->nlocal; i++)
+        i_creation_steps[i] = 0;
+    }
+    if (lifetime_flag == LIFETIME_HYDROLYSIS) {
+      if (!modify->get_fix_by_id(id_hydrolysis_fix)) {
+        fix_hydrolysis = modify->add_fix(std::string(id_hydrolysis_fix) +
+                                         " all property/atom d_hydrolysis_rn ghost yes");
+        
+        hydrolysis_random = new RanMars(lmp,hydrolysis_seed + comm->me);
+
+        // initialize per-atom hydrolysis_steps to step 0
+        int flag,cols;
+        int hydro_index = atom->find_custom("hydrolysis_rn",flag,cols);
+        double *d_hydrolysis_rn = atom->dvector[hydro_index];
+        for (int i = 0; i < atom->nlocal; i++)
+          d_hydrolysis_rn[i] = hydrolysis_random->uniform();
+      }
+    }
   }
 }
 
@@ -2499,8 +2599,41 @@ double FixBondReact::rxnfunction(const std::string& rxnfunc, const std::string& 
     }
   }
 
+  if (rxnfunc == "rxndiffIvan") {
+    if (fragid == "all") {
+      error->one(FLERR,"Bond/react: Molecule fragment "
+                              "in rxndiffIvan not specified");
+    } else {
+      int iatom1, iatom2;
+      for (int i = 0; i < onemol->natoms; i++) {
+        if (onemol->fragmentmask[ifrag][i]) {
+          iatom = atom->map(glove[i][1]);
+          // printf("i=%d iatom=%d var=%g; ", i, iatom, vvec[iatom][ivar]);
+          if (nsum == 0) {
+            iatom1 = iatom;
+            sumvvec += vvec[iatom][ivar];
+            nsum++;
+          }
+          else if (nsum==1) {
+            iatom2 = iatom;
+            sumvvec -= vvec[iatom][ivar];
+            nsum++;
+          }
+          else {
+            error->one(FLERR,"Bond/react: Molecule fragment "
+                              "in rxndiffIvan must contain exactly 2 atoms");
+          }
+        }
+      //if (iatom1>iatom2)
+      //  sumvvec = -sumvvec
+      }
+    // printf("nsum=%d sumvvec=%g.\n", nsum, sumvvec);
+    }
+  }
+
   if (rxnfunc == "rxnsum") return sumvvec;
   if (rxnfunc == "rxnave") return sumvvec/nsum;
+  if (rxnfunc == "rxndiffIvan") return sumvvec;
   return 0.0;
 }
 
@@ -3240,6 +3373,23 @@ void FixBondReact::update_everything()
         modify->create_attribute(n);
       }
 
+      // @FelixWodaczek/lifetime now update lifetimes
+      if (lifetime_flag) {
+        int ct_index = atom->find_custom("creation_steps",flag,cols);
+        int *i_creation_steps = atom->ivector[ct_index];
+        for (int i = atom->nlocal - addatoms.size(); i < atom->nlocal; i++) {
+          i_creation_steps[i] = update->ntimestep;
+        }
+
+        if (lifetime_flag == LIFETIME_HYDROLYSIS) {
+          int hydro_index = atom->find_custom("hydrolysis_rn",flag,cols);
+          double *d_hydrolysis_rn = atom->dvector[hydro_index];
+          for (int i = atom->nlocal - addatoms.size(); i < atom->nlocal; i++) {
+            d_hydrolysis_rn[i] = hydrolysis_random->uniform();
+          }
+        }
+      }
+
       // reset atom->map
       if (atom->map_style != Atom::MAP_NONE) {
         atom->map_init();
@@ -3849,17 +3999,20 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
 
     double **xfrozen; // coordinates for the "frozen" target molecule
     double **xmobile; // coordinates for the "mobile" molecule
+    double **oxfrozen; // OG coordinates for the "frozen" target molecule (for access after random redefinition if modify_create_nucrand is used) -- Chris 20/02/2023
     memory->create(xfrozen,n2superpose,3,"bond/react:xfrozen");
+    memory->create(oxfrozen,n2superpose,3,"bond/react:oxfrozen");
     memory->create(xmobile,n2superpose,3,"bond/react:xmobile");
     tagint iatom;
     tagint iref = -1; // choose first atom as reference
     int fit_incr = 0;
     for (int j = 0; j < twomol->natoms; j++) {
-      if (modify_create_fragid[rxnID] >= 0)
+      if (modify_create_fragid[rxnID] >= 0) // skip over all not involved atoms if not all atoms are used for the fit
         if (!twomol->fragmentmask[modify_create_fragid[rxnID]][j]) continue;
+      // no continue, so we know our j is now part of the fragment in which addition happens
       int ipre = equivalences[j][1][rxnID]-1; // equiv pre-reaction template index
-      if (!create_atoms[j][rxnID] && !delete_atoms[ipre][rxnID]) {
-        if (atom->map(my_update_mega_glove[ipre+1][iupdate]) < 0) {
+      if (!create_atoms[j][rxnID] && !delete_atoms[ipre][rxnID]) { // no clue what this does
+        if (atom->map(my_update_mega_glove[ipre+1][iupdate]) < 0) { // no idea what the glove is for
           error->warning(FLERR," eligible atoms skipped for created-atoms fit on rank {}\n",
                          comm->me);
           continue;
@@ -3867,9 +4020,118 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         iatom = atom->map(my_update_mega_glove[ipre+1][iupdate]);
         if (iref == -1) iref = iatom;
         iatom = domain->closest_image(iref,iatom);
+
         for (int k = 0; k < 3; k++) {
           xfrozen[fit_incr][k] = x[iatom][k];
           xmobile[fit_incr][k] = twomol->x[j][k];
+          oxfrozen[fit_incr][k] = x[iatom][k];  // OG coordinates for the "frozen" target molecule (for access after random redefinition if modify_create_nucrand is used) -- Chris 20/02/2023
+        }
+        if (modify_create_nucrand[rxnID] == 1) {
+          double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
+          if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID]
+            xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
+            xfrozen[fit_incr][1] = (domain->boxhi[1] - domain->boxlo[1]) * (random[rxnID]->uniform()-0.5);
+            xfrozen[fit_incr][2] = 0.0;
+          }
+          else {
+            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
+            xfrozen[fit_incr][2] = 0.0;
+          }
+        }
+        else if (modify_create_nucrand[rxnID] == 0) { // only positive X orientation! -- Chris 27/07/2023
+          if (fit_incr == 0) { // random position
+            for (int k = 0; k < 3; k++) {
+              if (dimension == 2 && k == 2) {
+                xfrozen[fit_incr][k] = 0.0;
+              }
+              else {
+                xfrozen[fit_incr][k] = (domain->boxhi[k] - domain->boxlo[k]) * (random[rxnID]->uniform()-0.5);
+              }
+            }
+          }
+          else { // positive in X only
+            xfrozen[fit_incr][0] = xfrozen[0][0] + fit_incr;
+            xfrozen[fit_incr][1] = xfrozen[0][1];
+            xfrozen[fit_incr][2] = xfrozen[0][2];
+          }
+        }
+        else if (modify_create_nucrand[rxnID] > 1) {
+          // Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
+          double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
+          if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID] - Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
+            xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
+            // Two RN -> 1 Normal-distributed number
+            double u1 = random[rxnID]->uniform();
+            double u2 = random[rxnID]->uniform();
+            xfrozen[fit_incr][1] = sqrt(-2*log(u1))*cos(2*M_PI*u2)*modify_create_nucrand[rxnID]+0.0;
+            xfrozen[fit_incr][2] = 0.0;
+          }
+          else {
+            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
+            xfrozen[fit_incr][2] = 0.0; 
+          }
+        }
+        else if (modify_create_nuccyl_rad[rxnID] > 0) {
+          // randomly place particles on cylinder
+          // cylinder radius supplied in modify_create_nucrand[rxnID]
+          // constant axis is y
+          if (fit_incr == 0) { 
+            // random position for first particle
+            double phi = 2*M_PI*random[rxnID]->uniform(); // random angle on cylinder
+            double y = 0.;
+            if (modify_create_nuccyl_mod[rxnID] > 0) {
+              // Use Box-Muller transform
+              // Box-Muller transform is apparently bad: https://stackoverflow.com/questions/75677/converting-a-uniform-distribution-to-a-normal-distribution
+              double u1 = random[rxnID]->uniform();
+              double u2 = random[rxnID]->uniform();
+              y = sqrt(-2*log(u1))*cos(2*M_PI*u2)*modify_create_nuccyl_mod[rxnID]+0.0; 
+            } else {
+                y = (domain->boxhi[1] - domain->boxlo[1]) * (random[rxnID]->uniform()-0.5); // random y position
+            }
+
+            xfrozen[fit_incr][0] = modify_create_nuccyl_rad[rxnID]*cos(phi);
+            xfrozen[fit_incr][1] = y;
+            xfrozen[fit_incr][2] = modify_create_nuccyl_rad[rxnID]*sin(phi);
+          } else {
+            // other particles! along y-axis for now, TODO: properly place other particles on cyelinder
+            double* shift = new double[3];
+            random_orientation_cylinder(rxnID, shift, xfrozen[0]);
+
+            xfrozen[fit_incr][0] = xfrozen[0][0] + shift[0];
+            xfrozen[fit_incr][1] = xfrozen[0][1] + shift[1];
+            xfrozen[fit_incr][2] = xfrozen[0][2] + shift[2];
+
+            delete[] shift;
+          }
+          // Chris' 'mod' command, deactivated for cylindrical creation
+          
+        }
+        // New boundary implementation, without using the closest_image() function from domain.cpp, which sometimes returns the wrong ID, likely due to the resetting of molecules IDs as new particles are created (part of the fix_bond_react.cpp)
+        // Chris - 20/02/2023
+        if (fit_incr > 0) {
+          double dx = xfrozen[fit_incr][0]-xfrozen[0][0];
+          double dy = xfrozen[fit_incr][1]-xfrozen[0][1];
+          double dz = xfrozen[fit_incr][2]-xfrozen[0][2];
+          if (dx < domain->boxlo[0]) {
+            xfrozen[fit_incr][0] += (domain->boxhi[0] - domain->boxlo[0]);
+          }
+          else if (dx > domain->boxhi[0]) {
+            xfrozen[fit_incr][0] -= (domain->boxhi[0] - domain->boxlo[0]);
+          }
+          if (dy < domain->boxlo[1]) {
+            xfrozen[fit_incr][1] += (domain->boxhi[1] - domain->boxlo[1]);
+          }
+          else if (dy > domain->boxhi[1]) {
+            xfrozen[fit_incr][1] -= (domain->boxhi[1] - domain->boxlo[1]);
+          }
+          if (dz < domain->boxlo[2]) {
+            xfrozen[fit_incr][2] += (domain->boxhi[2] - domain->boxlo[2]);
+          }
+          else if (dz > domain->boxhi[2]) {
+            xfrozen[fit_incr][2] -= (domain->boxhi[2] - domain->boxlo[2]);
+          }
         }
         fit_incr++;
       }
@@ -3878,7 +4140,9 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
     for (int i = 0; i < 3; i++)
       for (int j = 0; j < 3; j++)
         rotmat[i][j] = superposer.R[i][j];
+
     memory->destroy(xfrozen);
+    memory->destroy(oxfrozen);
     memory->destroy(xmobile);
   }
   MPI_Allreduce(MPI_IN_PLACE,&fitroot,1,MPI_INT,MPI_SUM,world);
@@ -4011,16 +4275,22 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         // guess a somewhat reasonable initial velocity based on reaction site
         // further control is possible using bond_react_MASTER_group
         // compute |velocity| corresponding to a given temperature t, using specific atom's mass
+        // Chris 12/10/2023: Replacing scaling factor of velocities for the right one: sqrt(12 kT / m)
         myaddatom.rmass = atom->rmass ? twomol->rmass[m] : atom->mass[twomol->type[m]];
-        double vtnorm = sqrt(t / (force->mvv2e / (dimension * force->boltz)) / myaddatom.rmass);
         double myv[3];
-        myv[0] = random[rxnID]->uniform();
-        myv[1] = random[rxnID]->uniform();
-        myv[2] = random[rxnID]->uniform();
-        double vnorm = sqrt(myv[0]*myv[0] + myv[1]*myv[1] + myv[2]*myv[2]);
-        myaddatom.v[0] = myv[0]/vnorm*vtnorm;
-        myaddatom.v[1] = myv[1]/vnorm*vtnorm;
-        myaddatom.v[2] = myv[2]/vnorm*vtnorm;
+        double vtnorm = sqrt( ( 12 * t * force->boltz ) / ( myaddatom.rmass * force->mvv2e ) );
+        myv[0] = vtnorm*(0.5-(random[rxnID]->uniform()));     // Chris 21/07/2023 added "0.5-"
+        myv[1] = vtnorm*(0.5-(random[rxnID]->uniform()));     // Chris 21/07/2023 added "0.5-"
+        if (dimension < 3) {
+          myv[2] = 0.0;
+        }
+        else {
+          myv[2] = vtnorm*(0.5-(random[rxnID]->uniform()));     // Chris 21/07/2023 added "0.5-"
+        }
+        myaddatom.v[0] = myv[0];
+        myaddatom.v[1] = myv[1];
+        myaddatom.v[2] = myv[2];
+
         addatoms.push_back(myaddatom);
       }
       // globally update mega_glove and equivalences
@@ -4043,6 +4313,45 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   // atom creation successful
   memory->destroy(coords);
   memory->destroy(imageflags);
+  return 1;
+}
+
+/* ----------------------------------------------------------------------
+creation of a random vector normal to a cylinder
+used for random direction in nucleation on cylinder
+------------------------------------------------------------------------- */
+
+int FixBondReact::random_orientation_cylinder(int rxnID, double *out_vec, double* cylinder_point)
+{
+  // TODO: this function allocates a lot of memory, optimise to use preallocated variables
+  double phi = 2*M_PI*random[rxnID]->uniform(); // random angle on cylinder
+
+  // generate the normal vector of this point on the cylinder
+  double* normal_vec = new double[3];
+  normal_vec[0] = cylinder_point[0];
+  normal_vec[1] = 0;
+  normal_vec[2] = cylinder_point[2];
+  double norm = 1./sqrt(normal_vec[0]*normal_vec[0] + normal_vec[1]*normal_vec[1] + normal_vec[2]*normal_vec[2]);
+  for(uint i=0;i<3;i++) normal_vec[i] *= norm;
+
+  // make a trial vector in y direction to rotate
+  double* buff_vec = new double[3];
+  buff_vec[0] = 0;
+  buff_vec[1] = 1;
+  buff_vec[2] = 0;
+
+  // now use shortened version of Rodrigues' rotation formula (https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula)
+  // compute (v cos(phi)) + (k x v sin(phi))
+  out_vec[0] = buff_vec[0] * cos(phi) + (normal_vec[1] * buff_vec[2] - normal_vec[2] * buff_vec[1]) * sin(phi);
+  out_vec[1] = buff_vec[1] * cos(phi) + (normal_vec[2] * buff_vec[0] - normal_vec[0] * buff_vec[2]) * sin(phi);
+  out_vec[2] = buff_vec[2] * cos(phi) + (normal_vec[0] * buff_vec[1] - normal_vec[1] * buff_vec[0]) * sin(phi);
+  
+  // technically this shouldn't be necessary since both vectors are unit vectors
+  norm = 1./sqrt(out_vec[0]*out_vec[0] + out_vec[1]*out_vec[1] + out_vec[2]*out_vec[2]);
+  for(uint i=0;i<3;i++) out_vec[i] *= norm;
+  norm = sqrt(out_vec[0]*out_vec[0] + out_vec[1]*out_vec[1] + out_vec[2]*out_vec[2]);
+  delete [] normal_vec;
+  delete [] buff_vec;
   return 1;
 }
 
