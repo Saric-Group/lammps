@@ -44,6 +44,7 @@ class PairHarmonicSurface : public Pair {
 
  protected:
   double **k, **r_zero, **cut;
+  int surface_type; // atom-type of particles to obtain normal from, must be ellipsoids
 
   virtual void allocate();
 };

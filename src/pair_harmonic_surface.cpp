@@ -12,7 +12,7 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing author: Axel Kohlmeyer (Temple U)
+   Contributing author: Felix Wodaczek (ISTA)
 ------------------------------------------------------------------------- */
 
 #include "pair_harmonic_surface.h"
@@ -102,17 +102,17 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       jtype = type[j];
 
       // determine normal vector at surface atom
-      if (jtype == 5) {
+      if (jtype == surface_type) {
         // simply set normal vectors as pointing radially inward for now.
         normx = - x[j][0];
         normy = 0;
         normz = - x[j][2];
-      } else if (itype == 5) {
+      } else if (itype == surface_type) {
         normx = - x[i][0];
         normy = 0;
         normz = - x[i][2];
       } else {
-        error->all(FLERR, "Wrong surface type.");
+        error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
       }
       normr = sqrt(normx * normx + normy * normy + normz * normz);
       normx /= normr;
@@ -129,29 +129,29 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
         const double prefactor = factor_lj * delta * k[itype][jtype] * theta_fact;
         const double fpair = 2.0 * prefactor / r;
         
-        if (itype == 5) {
-            // fpair is negative when larger than r_zero
-            // therefore change sign here to move surface atoms inwards
-            // therefore along normal, this should point inwards
-            fxtmp -= align * fpair * normx;
-            fytmp -= align * fpair * normy;
-            fztmp -= align * fpair * normz;
-            if (newton_pair || j < nlocal) {
-                f[j][0] += align * fpair * normx;
-                f[j][1] += align * fpair * normy;
-                f[j][2] += align * fpair * normz;
-            }
-        } else if (jtype == 5) {
-            fxtmp += align * fpair * normx;
-            fytmp += align * fpair * normy;
-            fztmp += align * fpair * normz;
-            if (newton_pair || j < nlocal) {
-                f[j][0] -= align * fpair * normx;
-                f[j][1] -= align * fpair * normy;
-                f[j][2] -= align * fpair * normz;
-            }
+        if (itype == surface_type) {
+          // fpair is negative when larger than r_zero
+          // therefore change sign here to move surface atoms inwards
+          // therefore along normal, this should point inwards
+          fxtmp -= align * fpair * normx;
+          fytmp -= align * fpair * normy;
+          fztmp -= align * fpair * normz;
+          if (newton_pair || j < nlocal) {
+              f[j][0] += align * fpair * normx;
+              f[j][1] += align * fpair * normy;
+              f[j][2] += align * fpair * normz;
+          }
+        } else if (jtype == surface_type) {
+          fxtmp += align * fpair * normx;
+          fytmp += align * fpair * normy;
+          fztmp += align * fpair * normz;
+          if (newton_pair || j < nlocal) {
+              f[j][0] -= align * fpair * normx;
+              f[j][1] -= align * fpair * normy;
+              f[j][2] -= align * fpair * normz;
+          }
         } else {
-            error->all(FLERR, "Wrong surface type.");
+          error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
         }
 
         if (evflag) {
@@ -191,9 +191,11 @@ void PairHarmonicSurface::allocate()
    global settings
 ------------------------------------------------------------------------- */
 
-void PairHarmonicSurface::settings(int narg, char ** /*arg*/)
+void PairHarmonicSurface::settings(int narg, char **arg)
 {
-  if (narg > 0) error->all(FLERR, "Illegal pair_style command");
+  if (narg != 1) error->all(FLERR, "Illegal pair_style command");
+
+  surface_type = utils::numeric(FLERR, arg[0], false, lmp);
 }
 
 /* ----------------------------------------------------------------------
@@ -298,6 +300,7 @@ void PairHarmonicSurface::read_restart(FILE *fp)
 
 void PairHarmonicSurface::write_restart_settings(FILE *fp)
 {
+  fwrite(&surface_type, sizeof(int), 1, fp);
   fwrite(&offset_flag, sizeof(int), 1, fp);
   fwrite(&mix_flag, sizeof(int), 1, fp);
   fwrite(&tail_flag, sizeof(int), 1, fp);
@@ -311,10 +314,12 @@ void PairHarmonicSurface::read_restart_settings(FILE *fp)
 {
   int me = comm->me;
   if (me == 0) {
+    utils::sfread(FLERR, &surface_type, sizeof(int), 1, fp, nullptr, error);
     utils::sfread(FLERR, &offset_flag, sizeof(int), 1, fp, nullptr, error);
     utils::sfread(FLERR, &mix_flag, sizeof(int), 1, fp, nullptr, error);
     utils::sfread(FLERR, &tail_flag, sizeof(int), 1, fp, nullptr, error);
   }
+  MPI_Bcast(&surface_type, 1, MPI_INT, 0, world);
   MPI_Bcast(&offset_flag, 1, MPI_INT, 0, world);
   MPI_Bcast(&mix_flag, 1, MPI_INT, 0, world);
   MPI_Bcast(&tail_flag, 1, MPI_INT, 0, world);
