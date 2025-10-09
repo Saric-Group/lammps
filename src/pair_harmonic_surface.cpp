@@ -18,10 +18,12 @@
 #include "pair_harmonic_surface.h"
 
 #include "atom.h"
+#include "atom_vec_ellipsoid.h"
 #include "comm.h"
 #include "error.h"
 #include "force.h"
 #include "math_const.h"
+#include "math_extra.h"
 #include "memory.h"
 #include "neigh_list.h"
 
@@ -56,10 +58,10 @@ PairHarmonicSurface::~PairHarmonicSurface()
 
 void PairHarmonicSurface::compute(int eflag, int vflag)
 {
-  int i, j, ii, jj, inum, jnum, itype, jtype;
+  int i, j, ii, jj, inum, jnum, itype, jtype, isurf;
   double xtmp, ytmp, ztmp, fxtmp, fytmp, fztmp;
   double delx, dely, delz, rsq, factor_lj;
-  double normx, normy, normz, normr;
+  double normx, normy, normz, normr, rotation[3][3];
   int *ilist, *jlist, *numneigh, **firstneigh;
 
   double costheta_max;
@@ -77,6 +79,9 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
   ilist = list->ilist;
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
+
+  avec = dynamic_cast<AtomVecEllipsoid *>(atom->style_match("ellipsoid"));
+  if (!avec) error->all(FLERR, "Pair style harmonic/surface requires atom style ellipsoid");
 
   // loop over neighbors of my atoms
 
@@ -103,17 +108,28 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
 
       // determine normal vector at surface atom
       if (jtype == surface_type) {
-        // simply set normal vectors as pointing radially inward for now.
-        normx = - x[j][0];
-        normy = 0;
-        normz = - x[j][2];
+        isurf = j;
       } else if (itype == surface_type) {
-        normx = - x[i][0];
-        normy = 0;
-        normz = - x[i][2];
+        isurf = i;
       } else {
         error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
       }
+      // simply set normal vectors as pointing radially inward this way:
+      // normx = - x[isurf][0];
+      // normy = 0;
+      // normz = - x[isurf][2];
+
+      if (!atom->ellipsoid_flag) error->all(FLERR, "Atom with index %d and type %d is not an ellipsoid, cannot obtain normal for pair style harmonic/surface", isurf, surface_type);
+      // taken from pair_ylz.cpp
+      // does this mean longest axis has to be x?
+      // or are the ellipsoid axis sorted by length?
+      double* iquat = avec->bonus[atom->ellipsoid[isurf]].quat;
+      MathExtra::quat_to_mat_trans(iquat, rotation);
+      // YlZ ellipsoids point outward, so make them point inward here
+      normx = -rotation[0][0];
+      normy = -rotation[0][1];
+      normz = -rotation[0][2];
+
       normr = sqrt(normx * normx + normy * normy + normz * normz);
       normx /= normr;
       normy /= normr;
