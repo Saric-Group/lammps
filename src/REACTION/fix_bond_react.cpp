@@ -4267,13 +4267,18 @@ if (overlap_mode[rxnID] != OVERLAP_OFF) {
     // Loop over each potential new atom defined in the template
     for (int m = 0; m < twomol->natoms; m++) {
       if (create_atoms[m][rxnID] == 1) {
+
+        // determine new atom radius (not used for basic overlap mode)
+        double new_atom_radius = 0.5;  // default radius
+        if (atom->molecules[reacted_mol[rxnID]]->radiusflag) {
+          new_atom_radius = atom->molecules[reacted_mol[rxnID]]->radius[m];
+        }
+
         // check against all existing local and ghost atoms
         for (int i = 0; i < atom->nlocal + atom->nghost; i++) {
           double cutoff_sq;
           if (overlap_mode[rxnID] == OVERLAP_SCALE) {
             // New radius-based method
-            // double new_atom_radius = atom->molecules[reacted_mol[rxnID]]->radius[m];
-            double new_atom_radius = 0.5;
             double existing_atom_radius = atom->radius[i];
             double cutoff_dist = (new_atom_radius + existing_atom_radius) * overlap_factor[rxnID];
             cutoff_sq = cutoff_dist * cutoff_dist;
@@ -4294,34 +4299,30 @@ if (overlap_mode[rxnID] != OVERLAP_OFF) {
         }
         if (overlap_failed) break;
 
-        // check against other newly created atoms in this same reaction event
-        for (int m2 = 0; m2 < m; m2++) {
-          if (create_atoms[m2][rxnID] == 1) {
+        // also check against previous to-be-added atoms
+        for (auto const& myaddatom : addatoms) {
             double cutoff_sq;
             if (overlap_mode[rxnID] == OVERLAP_SCALE) {
               // New radius-based method
-              // double new_atom1_radius = atom->molecules[reacted_mol[rxnID]]->radius[m];
-              // double new_atom2_radius = atom->molecules[reacted_mol[rxnID]]->radius[m2];
-              double new_atom1_radius = 0.5;
-              double new_atom2_radius = 0.5;
-              double cutoff_dist = (new_atom1_radius + new_atom2_radius) * overlap_factor[rxnID];
+              double pending_radius = myaddatom.radius;
+              double cutoff_dist = (new_atom_radius + pending_radius) * overlap_factor[rxnID];
               cutoff_sq = cutoff_dist * cutoff_dist;
             } else {
               // Old fixed-distance method
               cutoff_sq = overlapsq[rxnID];
             }
-
-            delx = coords[m][0] - coords[m2][0];
-            dely = coords[m][1] - coords[m2][1];
-            delz = coords[m][2] - coords[m2][2];
+            
+            delx = coords[m][0] - myaddatom.x[0];
+            dely = coords[m][1] - myaddatom.x[1];
+            delz = coords[m][2] - myaddatom.x[2];
             domain->minimum_image(FLERR, delx,dely,delz);
             rsq = delx*delx + dely*dely + delz*delz;
             if (rsq < cutoff_sq) {
-              overlap_failed = true;
-              break;
+                overlap_failed = true;
+                break;
             }
-          }
         }
+
         if (overlap_failed) break;
       }
     }
@@ -4516,6 +4517,12 @@ if (overlap_mode[rxnID] != OVERLAP_OFF) {
         myaddatom.mu[0] = rotated_mus[m][0];
         myaddatom.mu[1] = rotated_mus[m][1];
         myaddatom.mu[2] = rotated_mus[m][2];
+
+        if (twomol->radiusflag) {
+            myaddatom.radius = twomol->radius[m];
+        } else {
+            myaddatom.radius = 0.5;  // default radius, won't be used unless overlap_mode is OVERLAP_SCALE
+        }
 
         addatoms.push_back(myaddatom);
       }

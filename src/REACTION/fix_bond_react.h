@@ -269,7 +269,7 @@ class FixBondReact : public Fix {
     tagint tag, molecule;
     int type, mask;
     imageint image;
-    double rmass, x[3], v[3], mu[3];
+    double rmass, x[3], v[3], mu[3], radius;
   };
   std::vector<AddAtom> addatoms;
 
