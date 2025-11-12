@@ -44,6 +44,7 @@ class PairHarmonicSurface : public Pair {
 
  protected:
   double **k, **r_zero, **cut;
+  int **normal_factor;
   int surface_type; // atom-type of particles to obtain normal from, must be ellipsoids
 
   class AtomVecEllipsoid *avec; // to access orientation of ellipsoids

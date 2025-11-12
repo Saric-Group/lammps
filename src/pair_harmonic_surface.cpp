@@ -126,9 +126,9 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       double* iquat = avec->bonus[atom->ellipsoid[isurf]].quat;
       MathExtra::quat_to_mat_trans(iquat, rotation);
       // YlZ ellipsoids point outward, so make them point inward here
-      normx = -rotation[0][0];
-      normy = -rotation[0][1];
-      normz = -rotation[0][2];
+      normx = normal_factor[itype][jtype] * rotation[0][0];
+      normy = normal_factor[itype][jtype] * rotation[0][1];
+      normz = normal_factor[itype][jtype] * rotation[0][2];
 
       normr = sqrt(normx * normx + normy * normy + normz * normz);
       normx /= normr;
@@ -201,6 +201,7 @@ void PairHarmonicSurface::allocate()
   memory->create(r_zero, n, n, "pair:r_zero");
   memory->create(cut, n, n, "pair:cut");
   memory->create(cutsq, n, n, "pair:cutsq");
+  memory->create(normal_factor, n, n, "pair:normal_factor");
 }
 
 /* ----------------------------------------------------------------------
@@ -220,7 +221,7 @@ void PairHarmonicSurface::settings(int narg, char **arg)
 
 void PairHarmonicSurface::coeff(int narg, char **arg)
 {
-  if (narg != 5) error->all(FLERR, "Incorrect args for pair coefficients");
+  if (!(narg == 5 || narg == 6)) error->all(FLERR, "Incorrect args for pair coefficients");
   if (!allocated) allocate();
 
   int ilo, ihi, jlo, jhi;
@@ -230,6 +231,11 @@ void PairHarmonicSurface::coeff(int narg, char **arg)
   double k_one = utils::numeric(FLERR, arg[2], false, lmp);
   double r_zero_one = utils::numeric(FLERR, arg[3], false, lmp);
   double cut_one = utils::numeric(FLERR, arg[4], false, lmp);
+  double normal_factor_one = -1;
+  if (narg == 6) normal_factor_one = utils::inumeric(FLERR, arg[5], false, lmp);
+
+  if (!(normal_factor_one == 1 || normal_factor_one == -1)) error->all(FLERR, "Multiplier for surface normal has to be either -1 or 1, found %d.", normal_factor_one);
+
   // int surf_type = utils::inumeric(FLERR, arg[5], false, lmp); // TODO: projection, read an extra variable here for which atom type to extract normal from
 
   int count = 0;
@@ -238,6 +244,7 @@ void PairHarmonicSurface::coeff(int narg, char **arg)
       k[i][j] = k_one;
       r_zero[i][j] = r_zero_one;
       cut[i][j] = cut_one;
+      normal_factor[i][j] = normal_factor_one;
       setflag[i][j] = 1;
       count++;
     }
@@ -259,6 +266,7 @@ double PairHarmonicSurface::init_one(int i, int j)
   k[j][i] = k[i][j];
   r_zero[j][i] = r_zero[i][j];
   cut[j][i] = cut[i][j];
+  normal_factor[j][i] = normal_factor[i][j];
   return cut[i][j];
 }
 
@@ -278,6 +286,7 @@ void PairHarmonicSurface::write_restart(FILE *fp)
         fwrite(&k[i][j], sizeof(double), 1, fp);
         fwrite(&r_zero[i][j], sizeof(double), 1, fp);
         fwrite(&cut[i][j], sizeof(double), 1, fp);
+        fwrite(&normal_factor[i][j], sizeof(int), 1, fp);
       }
     }
 }
@@ -302,10 +311,12 @@ void PairHarmonicSurface::read_restart(FILE *fp)
           utils::sfread(FLERR, &k[i][j], sizeof(double), 1, fp, nullptr, error);
           utils::sfread(FLERR, &r_zero[i][j], sizeof(double), 1, fp, nullptr, error);
           utils::sfread(FLERR, &cut[i][j], sizeof(double), 1, fp, nullptr, error);
+          utils::sfread(FLERR, &normal_factor[i][j], sizeof(int), 1, fp, nullptr, error);
         }
         MPI_Bcast(&k[i][j], 1, MPI_DOUBLE, 0, world);
         MPI_Bcast(&r_zero[i][j], 1, MPI_DOUBLE, 0, world);
         MPI_Bcast(&cut[i][j], 1, MPI_DOUBLE, 0, world);
+        MPI_Bcast(&normal_factor[i][j], 1, MPI_INT, 0, world);
       }
     }
 }
@@ -347,7 +358,7 @@ void PairHarmonicSurface::read_restart_settings(FILE *fp)
 
 void PairHarmonicSurface::write_data(FILE *fp)
 {
-  for (int i = 1; i <= atom->ntypes; i++) fprintf(fp, "%d %g %g\n", i, k[i][i], r_zero[i][i], cut[i][i]);
+  for (int i = 1; i <= atom->ntypes; i++) fprintf(fp, "%d %g %g\n", i, k[i][i], r_zero[i][i], cut[i][i], normal_factor[i][i]);
 }
 
 /* ----------------------------------------------------------------------
@@ -357,7 +368,7 @@ void PairHarmonicSurface::write_data(FILE *fp)
 void PairHarmonicSurface::write_data_all(FILE *fp)
 {
   for (int i = 1; i <= atom->ntypes; i++)
-    for (int j = i; j <= atom->ntypes; j++) fprintf(fp, "%d %d %g %g %g\n", i, j, k[i][j], r_zero[i][j], cut[i][j]);
+    for (int j = i; j <= atom->ntypes; j++) fprintf(fp, "%d %d %g %g %g\n", i, j, k[i][j], r_zero[i][j], cut[i][j], normal_factor[i][j]);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -409,5 +420,6 @@ void *PairHarmonicSurface::extract(const char *str, int &dim)
   if (strcmp(str, "k") == 0) return (void *) k;
   if (strcmp(str, "r_zero") == 0) return (void *) r_zero;
   if (strcmp(str, "cut") == 0) return (void *) cut;
+  if (strcmp(str, "normal_factor") == 0) return (void *) normal_factor;
   return nullptr;
 }
