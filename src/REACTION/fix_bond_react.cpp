@@ -270,6 +270,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(modify_create_nuccyl_rad,nreacts,"bond/react:modify_create_nuccyl_rad"); // added for cylinder nucleation
   memory->create(modify_create_nuccyl_mod,nreacts,"bond/react:modify_create_nuccyl_mod"); // added for cylinder nucleation
   memory->create(overlapsq,nreacts,"bond/react:overlapsq");
+  memory->create(overlapexcept, nreacts, atom->ntypes, "bond/react:overlapexcept"); // @FelixWodaczek ignore atom types in insertion overlap check
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
   memory->create(nconstraints,nreacts,"bond/react:nconstraints");
   memory->create(constraintstr,nreacts,MAXLINE,"bond/react:constraintstr");
@@ -313,6 +314,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     for (int j = 0; j < NUMVARVALS; j++) {
       var_flag[j][i] = 0;
       var_id[j][i] = 0;
+    }
+    for (int itype=0; itype<atom->ntypes; itype++) {
+      overlapexcept[i][itype] = false; 
     }
   }
 
@@ -485,6 +489,18 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
               iarg += 1; // radius
             }
             iarg += 2; // nuc + cylinder
+          } else if (strcmp(arg[iarg],"nooverlap") == 0) {     
+            // number of excepted types
+            int num_except_types = utils::inumeric(FLERR, arg[iarg + 1], false, lmp);
+
+            if (iarg + 2 + num_except_types > narg) error->all(FLERR, "Illegal fix bond/react command: "
+               "'nooverlap' has too few arguments");
+
+            for (int excind=0; excind<num_except_types; excind++) {
+              int except_type = utils::inumeric(FLERR, arg[iarg + 2 + excind], false, lmp);
+              overlapexcept[rxn][except_type] = true;
+            }
+            iarg += 2 + num_except_types;
           } else if (strcmp(arg[iarg],"overlap") == 0) {
             if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                           "'modify_create' has too few arguments");
@@ -4171,6 +4187,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
     for (int m = 0; m < twomol->natoms; m++) {
       if (create_atoms[m][rxnID] == 1) {
         for (int i = 0; i < nlocal; i++) {
+          if (overlapexcept[rxnID][twomol->type[m]] || overlapexcept[rxnID][atom->type[i]]) continue;
           delx = coords[m][0] - x[i][0];
           dely = coords[m][1] - x[i][1];
           delz = coords[m][2] - x[i][2];
@@ -4189,6 +4206,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
       for (auto & myaddatom : addatoms) {
         for (int m = 0; m < twomol->natoms; m++) {
           if (create_atoms[m][rxnID] == 1) {
+            if (overlapexcept[rxnID][twomol->type[m]] || overlapexcept[rxnID][myaddatom.type]) continue;
             delx = coords[m][0] - myaddatom.x[0];
             dely = coords[m][1] - myaddatom.x[1];
             delz = coords[m][2] - myaddatom.x[2];
