@@ -22,6 +22,10 @@ public:
   int setmask() override;
   void init() override;
   void pre_force(int) override; // Called every timestep
+
+  // Memory management required for atom deletion/sorting
+  void grow_arrays(int) override;
+  void copy_arrays(int, int, int) override;
   
   std::vector<std::vector<tagint>> backbone_cache;
 

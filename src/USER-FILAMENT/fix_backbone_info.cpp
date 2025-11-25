@@ -21,6 +21,9 @@ FixBackboneInfo::FixBackboneInfo(LAMMPS *lmp, int narg, char **arg) : Fix(lmp, n
   max_dist = utils::inumeric(FLERR, arg[3], false, lmp);
   if (max_dist < 1) error->all(FLERR, "Max bond distance for fix backbone/info must be >= 1");
 
+  // Essential: Tell LAMMPS this fix stores per-atom data that must move with atoms
+  peratom_flag = 1; 
+
   nevery = 1;
   cache_valid = false;
 }
@@ -51,6 +54,21 @@ void FixBackboneInfo::pre_force(int /*vflag*/)
   }
 }
 
+void FixBackboneInfo::grow_arrays(int nmax)
+{
+  // Resize vectors to accommodate new max atoms
+  backbone_cache.resize(nmax);
+  adj.resize(nmax);
+  visited_flag.resize(nmax, -1);
+}
+
+void FixBackboneInfo::copy_arrays(int i, int j, int /*delflag*/)
+{
+  // When atom i moves to index j (because j was deleted), we must copy the cache data.
+  // This can potentially make a difference for bond/react with energy flag.
+  backbone_cache[j] = backbone_cache[i];
+}
+
 void FixBackboneInfo::ensure_cache()
 {
   if (cache_valid) return;
@@ -63,13 +81,9 @@ void FixBackboneInfo::build_cache()
   int nlocal = atom->nlocal;
   int nmax = atom->nmax;
 
-  // Resize
-  if ((int)backbone_cache.size() != nmax) {
-      backbone_cache.resize(nmax);
-      adj.resize(nmax);
-      visited_flag.resize(nmax, -1);
-  }
-  
+  // Ensure size is correct (in case grow_arrays wasn't triggered yet)
+  if ((int)backbone_cache.size() < nmax) grow_arrays(nmax);
+
   // Clear
   for (int i = 0; i < nmax; i++) {
       adj[i].clear();
