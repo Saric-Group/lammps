@@ -384,7 +384,7 @@ double PairNematicSoft::single_orientation(int itype, int jtype, double rsq, dou
     double sm = s * c0ij - c * s0ij;
 
     double ep = exp(-2.0 * kij * sp * sp);
-    double em = exp(-2.0 * kij * sm * sm);
+    // double em = exp(-2.0 * kij * sm * sm);
 
     double Uang = (1.0 - ep);    // * (1.0 - em);
 

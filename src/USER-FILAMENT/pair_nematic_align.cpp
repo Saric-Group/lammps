@@ -258,7 +258,12 @@ void PairNematicAlign::compute(int eflag, int vflag)
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
 
-  int pair_counter = 0;
+  // We call possible backbone list rebuild here
+  // It seems that because of combining with bond/react, the list can get stale if recomputed in pre_force for the fix
+  // pre_force method of the fix now just sets the flag for cache validity
+  if (fix_bi) {
+      fix_bi->ensure_cache();
+  }
 
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
@@ -269,33 +274,16 @@ void PairNematicAlign::compute(int eflag, int vflag)
     jlist = firstneigh[i];
     jnum = numneigh[i];
 
-    const std::vector<tagint>* neighbor_vec_for_i = nullptr;
+    const std::vector<tagint>* allowed_partners = nullptr;
     if (fix_bi) {
-        tagint tag_i = tag[i];
-        auto map_it = fix_bi->backbone_neighbors.find(tag_i);
-        if (map_it != fix_bi->backbone_neighbors.end()) {
-            neighbor_vec_for_i = &(map_it->second);
-        }
+        allowed_partners = fix_bi->get_backbone_partners(i);
+        // If empty, skip
+        if (!allowed_partners || allowed_partners->empty()) continue;
     }
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
       j &= NEIGHMASK;
-
-      if (fix_bi) {
-        // If atom i has no bonded neighbor list, skip all its interactions.
-        if (!neighbor_vec_for_i) continue;
-
-        tagint tag_j = tag[j];
-        const auto& vec = *neighbor_vec_for_i;
-
-        auto vec_it = std::find(vec.begin(), vec.end(), tag_j);
-
-        // If tag_j is NOT in the vector, it's not a bonded neighbor.
-        if (vec_it == vec.end()) {
-            continue;
-        }
-      }
 
       delx = xtmp - x[j][0];
       dely = ytmp - x[j][1];
@@ -303,136 +291,150 @@ void PairNematicAlign::compute(int eflag, int vflag)
       rsq = delx * delx + dely * dely + delz * delz;
       jtype = type[j];
 
-      if (rsq < cutsq[itype][jtype]) {
-        r = sqrt(rsq);
-        rinv = 1.0 / r;
-
-        pair_counter++;
-
-        energy = 0.0;
-        fx = 0.0;
-        fy = 0.0;
-        fz = 0.0;
-        tix = 0.0;
-        tiy = 0.0;
-        tiz = 0.0;
-        tjx = 0.0;
-        tjy = 0.0;
-        tjz = 0.0;
-
-        // soft repulsion (if enabled)
-        if (soft_repulsion_flag[itype][jtype]) {
-          double soft_rc = soft_cut[itype][jtype];
-          double Aij = soft_eps[itype][jtype];
-          if (r < soft_rc) {
-            double xarg = M_PI * r / soft_rc;
-            double Sr = Aij * (1.0 + cos(xarg));
-            double dSdr = -Aij * (M_PI / rc) * sin(xarg);
-
-            fx += dSdr * delx * rinv;
-            fy += dSdr * dely * rinv;
-            fz += dSdr * delz * rinv;
-            if (eflag) energy += Sr;
-          }
-        }
-
-        // alignment interaction calculation
-        rc = cut[itype][jtype];
-        if (r < rc && mu[i][3] > 0.0 && mu[j][3] > 0.0) {
-          eps = epsilon[itype][jtype];
-          if (rc <= 0.0) { rc = cut_global; }
-          if (rc <= 0.0) {
-            error->all(FLERR, "Cutoff must be set for pair coefficients in nematic/align");
-          }
-
-          r_over_rcut = r / rc;
-
-          mu1_dot_rij = mu[i][0] * delx + mu[i][1] * dely + mu[i][2] * delz;
-          mu2_dot_rij = mu[j][0] * delx + mu[j][1] * dely + mu[j][2] * delz;
-
-          // projections onto u and the scalar S (used for energy and force)
-          const double mu1_u = mu1_dot_rij * rinv;    // (mu1·u)
-          const double mu2_u = mu2_dot_rij * rinv;    // (mu2·u)
-          const double S = mu1_u * mu1_u + mu2_u * mu2_u;
-
-          // common radial prefactor
-          const double one_minus = 1.0 - r_over_rcut;
-
-          if (eflag) { energy += -eps * one_minus * one_minus * S; }
-
-          // potential and its derivative w.r.t r
-          const double g = -eps * one_minus * one_minus;
-          const double gprime = (2.0 * eps / rc) * one_minus;
-
-          const double ux = delx * rinv;
-          const double uy = dely * rinv;
-          const double uz = delz * rinv;
-
-          // force calculation (split into radial + tangential)
-          // components of (mu_k - (mu_k·u) u)  — purely tangential to u
-          const double a1x = mu[i][0] - mu1_u * ux;
-          const double a1y = mu[i][1] - mu1_u * uy;
-          const double a1z = mu[i][2] - mu1_u * uz;
-
-          const double a2x = mu[j][0] - mu2_u * ux;
-          const double a2y = mu[j][1] - mu2_u * uy;
-          const double a2z = mu[j][2] - mu2_u * uz;
-
-          // force magnitudes
-          const double frad_mag = -gprime * S;
-          const double ftan_pref = -g * (2.0 * rinv);
-
-          // tangential contribution (perpendicular to rij)
-          double fx_tan = ftan_pref * (mu1_u * a1x + mu2_u * a2x);
-          double fy_tan = ftan_pref * (mu1_u * a1y + mu2_u * a2y);
-          double fz_tan = ftan_pref * (mu1_u * a1z + mu2_u * a2z);
-
-          // tangential force
-          fx += fx_tan;
-          fy += fy_tan;
-          fz += fz_tan;
-
-          // add radial contribution unless 'no_radial' flag is set for this pair type
-          if (!no_radial_flag[itype][jtype]) {
-            fx += frad_mag * ux;
-            fy += frad_mag * uy;
-            fz += frad_mag * uz;
-          }
-
-          // torque calculation
-          const double torque_common = -2.0 * g * rinv * rinv;
-
-          tix = torque_common * mu1_dot_rij * (mu[i][1] * delz - mu[i][2] * dely);
-          tiy = torque_common * mu1_dot_rij * (mu[i][2] * delx - mu[i][0] * delz);
-          tiz = torque_common * mu1_dot_rij * (mu[i][0] * dely - mu[i][1] * delx);
-
-          tjx = torque_common * mu2_dot_rij * (mu[j][1] * delz - mu[j][2] * dely);
-          tjy = torque_common * mu2_dot_rij * (mu[j][2] * delx - mu[j][0] * delz);
-          tjz = torque_common * mu2_dot_rij * (mu[j][0] * dely - mu[j][1] * delx);
-        }
-
-        // total force and torque accumulation ---
-        if (eflag) evdwl = energy;
-
-        f[i][0] += fx;
-        f[i][1] += fy;
-        f[i][2] += fz;
-        torque[i][0] += tix;
-        torque[i][1] += tiy;
-        torque[i][2] += tiz;
-
-        if (newton_pair || j < nlocal) {
-          f[j][0] -= fx;
-          f[j][1] -= fy;
-          f[j][2] -= fz;
-          torque[j][0] += tjx;
-          torque[j][1] += tjy;
-          torque[j][2] += tjz;
-        }
-
-        if (evflag)
-          ev_tally_xyz(i, j, nlocal, newton_pair, evdwl, 0.0, fx, fy, fz, delx, dely, delz);
+      if (rsq >= cutsq[itype][jtype]) {
+        continue;
       }
+
+      if (fix_bi) {
+        tagint tag_j = tag[j]; 
+
+        bool found = false;
+        for (tagint partner_tag : *allowed_partners) {
+            if (partner_tag == tag_j) {
+                found = true;
+                break;
+            }
+        }
+        
+        if (__builtin_expect(!found, 0)) continue;
+      }
+
+      r = sqrt(rsq);
+      rinv = 1.0 / r;
+
+      energy = 0.0;
+      fx = 0.0;
+      fy = 0.0;
+      fz = 0.0;
+      tix = 0.0;
+      tiy = 0.0;
+      tiz = 0.0;
+      tjx = 0.0;
+      tjy = 0.0;
+      tjz = 0.0;
+
+      // soft repulsion (if enabled)
+      if (soft_repulsion_flag[itype][jtype]) {
+        double soft_rc = soft_cut[itype][jtype];
+        double Aij = soft_eps[itype][jtype];
+        if (r < soft_rc) {
+          double xarg = M_PI * r / soft_rc;
+          double Sr = Aij * (1.0 + cos(xarg));
+          double dSdr = -Aij * (M_PI / rc) * sin(xarg);
+
+          fx += dSdr * delx * rinv;
+          fy += dSdr * dely * rinv;
+          fz += dSdr * delz * rinv;
+          if (eflag) energy += Sr;
+        }
+      }
+
+      // alignment interaction calculation
+      rc = cut[itype][jtype];
+      if (r < rc && mu[i][3] > 0.0 && mu[j][3] > 0.0) {
+        eps = epsilon[itype][jtype];
+        if (rc <= 0.0) { rc = cut_global; }
+        if (rc <= 0.0) {
+          error->all(FLERR, "Cutoff must be set for pair coefficients in nematic/align");
+        }
+
+        r_over_rcut = r / rc;
+
+        mu1_dot_rij = mu[i][0] * delx + mu[i][1] * dely + mu[i][2] * delz;
+        mu2_dot_rij = mu[j][0] * delx + mu[j][1] * dely + mu[j][2] * delz;
+
+        // projections onto u and the scalar S (used for energy and force)
+        const double mu1_u = mu1_dot_rij * rinv;    // (mu1·u)
+        const double mu2_u = mu2_dot_rij * rinv;    // (mu2·u)
+        const double S = mu1_u * mu1_u + mu2_u * mu2_u;
+
+        // common radial prefactor
+        const double one_minus = 1.0 - r_over_rcut;
+
+        if (eflag) { energy += -eps * one_minus * one_minus * S; }
+
+        // potential and its derivative w.r.t r
+        const double g = -eps * one_minus * one_minus;
+        const double gprime = (2.0 * eps / rc) * one_minus;
+
+        const double ux = delx * rinv;
+        const double uy = dely * rinv;
+        const double uz = delz * rinv;
+
+        // force calculation (split into radial + tangential)
+        // components of (mu_k - (mu_k·u) u)  — purely tangential to u
+        const double a1x = mu[i][0] - mu1_u * ux;
+        const double a1y = mu[i][1] - mu1_u * uy;
+        const double a1z = mu[i][2] - mu1_u * uz;
+
+        const double a2x = mu[j][0] - mu2_u * ux;
+        const double a2y = mu[j][1] - mu2_u * uy;
+        const double a2z = mu[j][2] - mu2_u * uz;
+
+        // force magnitudes
+        const double frad_mag = -gprime * S;
+        const double ftan_pref = -g * (2.0 * rinv);
+
+        // tangential contribution (perpendicular to rij)
+        double fx_tan = ftan_pref * (mu1_u * a1x + mu2_u * a2x);
+        double fy_tan = ftan_pref * (mu1_u * a1y + mu2_u * a2y);
+        double fz_tan = ftan_pref * (mu1_u * a1z + mu2_u * a2z);
+
+        // tangential force
+        fx += fx_tan;
+        fy += fy_tan;
+        fz += fz_tan;
+
+        // add radial contribution unless 'no_radial' flag is set for this pair type
+        if (!no_radial_flag[itype][jtype]) {
+          fx += frad_mag * ux;
+          fy += frad_mag * uy;
+          fz += frad_mag * uz;
+        }
+
+        // torque calculation
+        const double torque_common = -2.0 * g * rinv * rinv;
+
+        tix = torque_common * mu1_dot_rij * (mu[i][1] * delz - mu[i][2] * dely);
+        tiy = torque_common * mu1_dot_rij * (mu[i][2] * delx - mu[i][0] * delz);
+        tiz = torque_common * mu1_dot_rij * (mu[i][0] * dely - mu[i][1] * delx);
+
+        tjx = torque_common * mu2_dot_rij * (mu[j][1] * delz - mu[j][2] * dely);
+        tjy = torque_common * mu2_dot_rij * (mu[j][2] * delx - mu[j][0] * delz);
+        tjz = torque_common * mu2_dot_rij * (mu[j][0] * dely - mu[j][1] * delx);
+      }
+
+      // total force and torque accumulation ---
+      if (eflag) evdwl = energy;
+
+      f[i][0] += fx;
+      f[i][1] += fy;
+      f[i][2] += fz;
+      torque[i][0] += tix;
+      torque[i][1] += tiy;
+      torque[i][2] += tiz;
+
+      if (newton_pair || j < nlocal) {
+        f[j][0] -= fx;
+        f[j][1] -= fy;
+        f[j][2] -= fz;
+        torque[j][0] += tjx;
+        torque[j][1] += tjy;
+        torque[j][2] += tjz;
+      }
+
+      if (evflag)
+        ev_tally_xyz(i, j, nlocal, newton_pair, evdwl, 0.0, fx, fy, fz, delx, dely, delz);
     }
   }
 

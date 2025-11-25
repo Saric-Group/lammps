@@ -12,8 +12,6 @@ FixStyle(backbone/info, FixBackboneInfo)
 
 #include "fix.h"
 #include <vector>
-#include <unordered_map>
-#include <set>
 
 namespace LAMMPS_NS {
 
@@ -25,23 +23,28 @@ public:
   void init() override;
   void pre_force(int) override; // Called every timestep
   
-  // The public data structure that the pair style will access
-  // For each atom index [i], it stores a map of {neighbor_tag -> distance_in_bonds}
-  std::unordered_map<tagint, std::vector<tagint>> backbone_neighbors;
+  std::vector<std::vector<tagint>> backbone_cache;
+
+  // Optimized getter for the Pair Style
+  inline const std::vector<tagint>* get_backbone_partners(int i) const {
+    if (i >= 0 && i < (int)backbone_cache.size()) {
+        return &backbone_cache[i];
+    }
+    return nullptr;
+  }
+
+  void ensure_cache();
   
 
 private:
-  int max_dist; // Max bond distance to search
+  int max_dist;
+  bool cache_valid;
+  
+  // Internal scratch containers
+  std::vector<std::vector<int>> adj; 
+  std::vector<int> visited_flag;
 
-  // The full rebuild, used only at the start of a run
-  void compute_all_backbone_maps();
-
-  // Helper function to run a single BFS from a starting atom index
-  void run_bfs_from_atom(int start_idx);
-
-  // The symmetric representation of the bond graph.
-  // This is the key to being independent of "newton bond".
-  std::vector<std::vector<int>> adj;
+  void build_cache();
 };
 
 } // namespace LAMMPS_NS
