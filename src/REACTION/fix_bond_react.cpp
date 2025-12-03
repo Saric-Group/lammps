@@ -478,6 +478,20 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
               modify_create_nucrand[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
               iarg += 1;
             }
+            else if (strcmp(arg[iarg+1], "cylinder") == 0){
+              // nuc cylinder (mod width) radius
+              if (strcmp(arg[iarg+2], "mod") == 0) {
+                modify_create_nuccyl_mod[rxn] =  utils::numeric(FLERR,arg[iarg+3],false,lmp); // positive orientation in X
+                iarg += 2; // mod + width
+              }
+              else {
+                modify_create_nuccyl_mod[rxn] = -1; // random orientation within a cylinder of radius R
+              }
+              modify_create_nuccyl_rad[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp);; // random orientation within a cylinder of radius R
+              iarg += 1; // radius
+            }
+            iarg += 2; // nuc + cylinder
+          }
             else if (strcmp(arg[iarg],"nuc_trimer") == 0) {                                                // Adding a flag "nuc_trimer" to nucleate the new trimer in a random position within the box, independent of the position of the nucleator - Chris 22/02/2023
             if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                           "'modify_create' has too few arguments");
@@ -489,7 +503,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
               modify_create_nuc_from_trimer[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
               iarg += 1;
             }
-            else if (strcmp(arg[iarg+1], "cylinder") == 0){
+           else if (strcmp(arg[iarg+1], "cylinder") == 0){
               // nuc cylinder (mod width) radius
               if (strcmp(arg[iarg+2], "mod") == 0) {
                 modify_create_nuccyl_mod[rxn] =  utils::numeric(FLERR,arg[iarg+3],false,lmp); // positive orientation in X
