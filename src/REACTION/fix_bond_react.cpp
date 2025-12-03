@@ -269,6 +269,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(modify_create_nucrand,nreacts,"bond/react:modify_create_nucrand");          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
   memory->create(modify_create_nuccyl_rad,nreacts,"bond/react:modify_create_nuccyl_rad"); // added for cylinder nucleation
   memory->create(modify_create_nuccyl_mod,nreacts,"bond/react:modify_create_nuccyl_mod"); // added for cylinder nucleation
+  memory->create(modify_create_nuc_from_trimer,nreacts,"bond/react:modify_create_nuc_from_trimer"); // Marija 03.12.2025 - added for 'directional' nucleation, when patches are needed in the monomer
   memory->create(overlapsq,nreacts,"bond/react:overlapsq");
   memory->create(overlapexcept, nreacts, atom->ntypes, "bond/react:overlapexcept"); // @FelixWodaczek ignore atom types in insertion overlap check
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
@@ -302,6 +303,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     modify_create_nucrand[i] = -1;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
     modify_create_nuccyl_rad[i] = -1; // added for cylinder nucleation
     modify_create_nuccyl_mod[i] = -1; // added for cylinder nucleation
+    modify_create_nuc_from_trimer[i] = -1; // Marija 03.12.2025 - added for 'directional' nucleation, when patches are needed in the monomer
     overlapsq[i] = 0.0;
     molecule_keyword[i] = OFF;
     nconstraints[i] = 0;
@@ -474,6 +476,17 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
             else if (strcmp(arg[iarg+1],"mod") == 0) {
               // error->all(FLERR, "Command 'mod' has been deactivated.");
               modify_create_nucrand[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
+              iarg += 1;
+            }
+            else if (strcmp(arg[iarg],"nuc_trimer") == 0) {                                                // Adding a flag "nuc_trimer" to nucleate the new trimer in a random position within the box, independent of the position of the nucleator - Chris 22/02/2023
+            if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
+                                          "'modify_create' has too few arguments");
+            if (strcmp(arg[iarg+1],"no") == 0) modify_create_nuc_from_trimer[rxn] = -1; //default
+            else if (strcmp(arg[iarg+1],"yes") == 0) modify_create_nuc_from_trimer[rxn] = 1; // random orientation
+            else if (strcmp(arg[iarg+1],"xor") == 0) modify_create_nuc_from_trimer[rxn] = 0; // positive orientation in X
+            else if (strcmp(arg[iarg+1],"mod") == 0) {
+              // error->all(FLERR, "Command 'mod' has been deactivated.");
+              modify_create_nuc_from_trimer[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
               iarg += 1;
             }
             else if (strcmp(arg[iarg+1], "cylinder") == 0){
@@ -786,6 +799,7 @@ FixBondReact::~FixBondReact()
   memory->destroy(modify_create_nucrand);          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
   memory->destroy(modify_create_nuccyl_rad); // added for cylinder nucleation
   memory->destroy(modify_create_nuccyl_mod); // added for cylinder nucleation
+  memory->destroy(modify_create_nuc_from_trimer);          // added vector modify_create_nuc_from_trimer to store random nucleation flags for each reaction - Chris 20/02/2023
   memory->destroy(overlapsq);
 
   memory->destroy(iatomtype);
@@ -4088,6 +4102,74 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
             xfrozen[fit_incr][2] = 0.0; 
           }
+        }
+        if (modify_create_nuc_from_trimer[rxnID] == 1) { // Marija 03.12.2025 - making a parallel of Chris' flag but to support a trimer based nucleation to give the particles some orientation - assuming all three particles are in the XY plane(first two particles define the X axis, the third defines the Y axis), to allow 2D simulations but to give the dimer directionality
+          double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
+          if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID]
+            xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
+            xfrozen[fit_incr][1] = (domain->boxhi[1] - domain->boxlo[1]) * (random[rxnID]->uniform()-0.5);
+            xfrozen[fit_incr][2] = 0.0;
+          }
+          else if (fit_incr == 1) { //position of particle 0 is (0,0,0), particle 1 is at (1,0,0)
+            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
+            xfrozen[fit_incr][2] = 0.0;
+          }
+          else  { //adding third particle bonded with the initial two with a bond of rest length 1  - position in xy (0.5, sqrt(3)/2,0)
+            double new_ang = ang + M_PI/3.0; // the three particles int he template form an equilateral triangle - total angle is += 60 degrees
+
+            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(new_ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(new_ang);
+            xfrozen[fit_incr][2] = 0.0;
+          }
+        }
+        else if (modify_create_nuc_from_trimer[rxnID] == 0) { // only positive X orientation! -- Chris 27/07/2023
+          if (fit_incr == 0) { // random position
+            for (int k = 0; k < 3; k++) {
+              if (dimension == 2 && k == 2) {
+                xfrozen[fit_incr][k] = 0.0;
+              }
+              else {
+                xfrozen[fit_incr][k] = (domain->boxhi[k] - domain->boxlo[k]) * (random[rxnID]->uniform()-0.5);
+              }
+            }
+          }
+          else if (fit_incr == 1) { // positive in X only
+            xfrozen[fit_incr][0] = xfrozen[0][0] + fit_incr;
+            xfrozen[fit_incr][1] = xfrozen[0][1];
+            xfrozen[fit_incr][2] = xfrozen[0][2];
+          }
+
+          else { // adding third particle bonded with the initial two with a bond of rest length 1  - position in xy (0.5, sqrt(3)/2,0)
+            xfrozen[fit_incr][0] = xfrozen[0][0] + 0.5;
+            xfrozen[fit_incr][1] = xfrozen[0][1] + sqrt(3.0)/2.0;
+            xfrozen[fit_incr][2] = xfrozen[0][2];
+          }
+        }
+        else if (modify_create_nuc_from_trimer[rxnID] > 1) {
+          // Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
+          double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
+          if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID] - Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
+            xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
+            // Two RN -> 1 Normal-distributed number
+            double u1 = random[rxnID]->uniform();
+            double u2 = random[rxnID]->uniform();
+            xfrozen[fit_incr][1] = sqrt(-2*log(u1))*cos(2*M_PI*u2)*modify_create_nuc_from_trimer[rxnID]+0.0;
+            xfrozen[fit_incr][2] = 0.0;
+          }
+          else if (fit_incr == 1) { 
+            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
+            xfrozen[fit_incr][2] = 0.0; 
+          }
+          else  { //adding third particle bonded with the initial two with a bond of rest length 1  - position in xy (0.5, sqrt(3)/2,0)
+            double new_ang = ang + M_PI/3.0; // the three particles int he template form an equilateral triangle - total angle is += 60 degrees
+
+            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(new_ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(new_ang);
+            xfrozen[fit_incr][2] = 0.0;
+          }
+
         }
         else if (modify_create_nuccyl_rad[rxnID] > 0) {
           // randomly place particles on cylinder
