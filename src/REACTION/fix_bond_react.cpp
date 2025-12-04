@@ -501,9 +501,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
             else if (strcmp(arg[iarg+1],"mod") == 0) {
               // error->all(FLERR, "Command 'mod' has been deactivated.");
               modify_create_nuc_from_trimer[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
-              iarg += 1;
-            }
-           else if (strcmp(arg[iarg+1], "cylinder") == 0){
+              iarg += 1;}
+
+            else if (strcmp(arg[iarg+1], "cylinder") == 0){
               // nuc cylinder (mod width) radius
               if (strcmp(arg[iarg+2], "mod") == 0) {
                 modify_create_nuccyl_mod[rxn] =  utils::numeric(FLERR,arg[iarg+3],false,lmp); // positive orientation in X
@@ -515,7 +515,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
               modify_create_nuccyl_rad[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp);; // random orientation within a cylinder of radius R
               iarg += 1; // radius
             }
-            iarg += 2; // nuc + cylinder
+
+            iarg += 2; // nuc_trimer 
           } else if (strcmp(arg[iarg],"nooverlap") == 0) {     
             // number of excepted types
             int num_except_types = utils::inumeric(FLERR, arg[iarg + 1], false, lmp);
@@ -4122,19 +4123,18 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
           if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID]
             xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
             xfrozen[fit_incr][1] = (domain->boxhi[1] - domain->boxlo[1]) * (random[rxnID]->uniform()-0.5);
-            xfrozen[fit_incr][2] = 0.0;
+            xfrozen[fit_incr][2] = 0;
           }
           else if (fit_incr == 1) { //position of particle 0 is (0,0,0), particle 1 is at (1,0,0)
-            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(ang);
-            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
-            xfrozen[fit_incr][2] = 0.0;
+            xfrozen[fit_incr][0] = xfrozen[0][0] + cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + sin(ang);
+            xfrozen[fit_incr][2] = 0;
           }
           else  { //adding third particle bonded with the initial two with a bond of rest length 1  - position in xy (0.5, sqrt(3)/2,0)
-            double new_ang = ang + M_PI/3.0; // the three particles int he template form an equilateral triangle - total angle is += 60 degrees
 
-            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(new_ang);
-            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(new_ang);
-            xfrozen[fit_incr][2] = 0.0;
+            xfrozen[fit_incr][0] = xfrozen[0][0] + 1/2*cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + 1/2*sin(ang);
+            xfrozen[fit_incr][2] = 2.0; //modified 04.12. to form an isosceles triangle 
           }
         }
         else if (modify_create_nuc_from_trimer[rxnID] == 0) { // only positive X orientation! -- Chris 27/07/2023
@@ -4156,8 +4156,8 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
 
           else { // adding third particle bonded with the initial two with a bond of rest length 1  - position in xy (0.5, sqrt(3)/2,0)
             xfrozen[fit_incr][0] = xfrozen[0][0] + 0.5;
-            xfrozen[fit_incr][1] = xfrozen[0][1] + sqrt(3.0)/2.0;
-            xfrozen[fit_incr][2] = xfrozen[0][2];
+            xfrozen[fit_incr][1] = xfrozen[0][1];
+            xfrozen[fit_incr][2] = xfrozen[0][2]+2;
           }
         }
         else if (modify_create_nuc_from_trimer[rxnID] > 1) {
@@ -4172,16 +4172,15 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             xfrozen[fit_incr][2] = 0.0;
           }
           else if (fit_incr == 1) { 
-            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(ang);
-            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(ang);
+            xfrozen[fit_incr][0] = xfrozen[0][0] + cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + sin(ang);
             xfrozen[fit_incr][2] = 0.0; 
           }
-          else  { //adding third particle bonded with the initial two with a bond of rest length 1  - position in xy (0.5, sqrt(3)/2,0)
-            double new_ang = ang + M_PI/3.0; // the three particles int he template form an equilateral triangle - total angle is += 60 degrees
+          else  { //adding third particle bonded with the initial two with a bond of rest length 1  - position in xyz (0.5, 0,2)
 
-            xfrozen[fit_incr][0] = xfrozen[0][0] + (float)fit_incr*cos(new_ang);
-            xfrozen[fit_incr][1] = xfrozen[0][1] + (float)fit_incr*sin(new_ang);
-            xfrozen[fit_incr][2] = 0.0;
+            xfrozen[fit_incr][0] = xfrozen[0][0] + 1/2*cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + 1/2*sin(ang);
+            xfrozen[fit_incr][2] = 2.0;
           }
 
         }
