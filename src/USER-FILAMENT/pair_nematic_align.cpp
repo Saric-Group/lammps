@@ -1,5 +1,5 @@
 /* ----------------------------------------------------------------------
-   Added by @andraz-gnidovec
+   Updated by @andraz-gnidovec
 ------------------------------------------------------------------------- */
 
 #include "pair_nematic_align.h"
@@ -39,9 +39,6 @@ PairNematicAlign::~PairNematicAlign()
     memory->destroy(cutsq);
     memory->destroy(epsilon);
     memory->destroy(cut);
-    memory->destroy(soft_repulsion_flag);
-    memory->destroy(soft_cut);
-    memory->destroy(soft_eps);
     memory->destroy(no_radial_flag);
   }
 }
@@ -59,15 +56,10 @@ void PairNematicAlign::allocate()
   memory->create(cutsq, n + 1, n + 1, "pair:cutsq");
   memory->create(epsilon, n + 1, n + 1, "pair:epsilon");
   memory->create(cut, n + 1, n + 1, "pair:cut");
-
-  memory->create(soft_repulsion_flag, n + 1, n + 1, "pair:soft_repulsion_flag");
-  memory->create(soft_cut, n + 1, n + 1, "pair:soft_cut");
-  memory->create(soft_eps, n + 1, n + 1, "pair:soft_eps");
   memory->create(no_radial_flag, n + 1, n + 1, "pair:no_radial_flag");
 
   for (int i = 1; i <= n; i++) {
     for (int j = 1; j <= n; j++) {
-      soft_repulsion_flag[i][j] = 0;
       no_radial_flag[i][j] = 0;
     }
   }
@@ -119,7 +111,8 @@ void PairNematicAlign::coeff(int narg, char **arg)
   }
 
   // The rest of the function uses narg_eff to validate argument count
-  if (narg_eff != 3 && narg_eff != 4 && narg_eff != 6 && narg_eff != 7)
+  // Expected args: i j epsilon [cut]
+  if (narg_eff != 3 && narg_eff != 4)
     error->all(FLERR, "Incorrect args for pair coefficients");
   if (!allocated) allocate();
 
@@ -130,34 +123,8 @@ void PairNematicAlign::coeff(int narg, char **arg)
   double epsilon_one = utils::numeric(FLERR, arg[2], false, lmp);
 
   double cut_one = cut_global;
-  int soft_repulsion_flag_one = 0;
-  double lj_sigma_one = 0.0;
-  double lj_epsilon_one = 0.0;
-
-  int wca_idx = -1;
-  for (int i = 3; i < narg_eff; i++) {
-    if (strcmp(arg[i], "wca") == 0) {
-      wca_idx = i;
-      break;
-    }
-  }
-
-  if (wca_idx != -1) {
-    soft_repulsion_flag_one = 1;
-    if (narg_eff != wca_idx + 3)
-      error->all(FLERR, "Incorrect args for pair coefficients: wca requires 2 parameters");
-
-    lj_sigma_one = utils::numeric(FLERR, arg[wca_idx + 1], false, lmp);
-    lj_epsilon_one = utils::numeric(FLERR, arg[wca_idx + 2], false, lmp);
-
-    if (wca_idx == 4) {
-      cut_one = utils::numeric(FLERR, arg[3], false, lmp);
-    } else if (wca_idx != 3) {
-      error->all(FLERR, "Incorrect args for pair coefficients");
-    }
-
-  } else {
-    if (narg_eff == 4) { cut_one = utils::numeric(FLERR, arg[3], false, lmp); }
+  if (narg_eff == 4) { 
+      cut_one = utils::numeric(FLERR, arg[3], false, lmp); 
   }
 
   if (cut_one <= 0.0) error->all(FLERR, "Invalid cutoff specified for pair coefficients");
@@ -167,9 +134,6 @@ void PairNematicAlign::coeff(int narg, char **arg)
     for (int j = MAX(jlo, i); j <= jhi; j++) {
       epsilon[i][j] = epsilon_one;
       cut[i][j] = cut_one;
-      soft_repulsion_flag[i][j] = soft_repulsion_flag_one;
-      soft_cut[i][j] = lj_sigma_one;
-      soft_eps[i][j] = lj_epsilon_one;
       no_radial_flag[i][j] = no_radial_flag_one;
       setflag[i][j] = 1;
       count++;
@@ -207,31 +171,19 @@ double PairNematicAlign::init_one(int i, int j)
   if (!setflag[i][j]) {
     epsilon[i][j] = 0.0;
     cut[i][j] = 0.0;
-    soft_repulsion_flag[i][j] = 0;
-    soft_cut[i][j] = 0.0;
-    soft_eps[i][j] = 0.0;
     no_radial_flag[i][j] = 0.0;
   }
 
   epsilon[j][i] = epsilon[i][j];
   cut[j][i] = cut[i][j];
-  soft_repulsion_flag[j][i] = soft_repulsion_flag[i][j];
-  soft_cut[j][i] = soft_cut[i][j];
-  soft_eps[j][i] = soft_eps[i][j];
   no_radial_flag[j][i] = no_radial_flag[i][j];
 
-  double nematic_cut = cut[i][j];
-  double wca_cut = 0.0;
-  if (soft_repulsion_flag[i][j] && soft_cut[i][j] > 0.0) {
-    wca_cut = 1.12246204831 * soft_cut[i][j];
-  }
-
-  return MAX(nematic_cut, wca_cut);
+  return cut[i][j];
 }
 
 void PairNematicAlign::compute(int eflag, int vflag)
 {
-  int i, j, ii, jj, inum, jnum, itype, jtype;
+  int i, j, ii, jj, inum, jnum, itype, jtype, imol, jmol;
   double xtmp, ytmp, ztmp, delx, dely, delz, rsq;
   double r, r_over_rcut, rinv;
   double mu1_dot_rij, mu2_dot_rij;
@@ -249,6 +201,7 @@ void PairNematicAlign::compute(int eflag, int vflag)
   double **mu = atom->mu;
   double **torque = atom->torque;
   int *type = atom->type;
+  int *molecule = atom->molecule;
   int nlocal = atom->nlocal;
   int newton_pair = force->newton_pair;
   tagint *tag = atom->tag;
@@ -271,6 +224,7 @@ void PairNematicAlign::compute(int eflag, int vflag)
     ytmp = x[i][1];
     ztmp = x[i][2];
     itype = type[i];
+    imol = molecule[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
 
@@ -296,6 +250,11 @@ void PairNematicAlign::compute(int eflag, int vflag)
       }
 
       if (fix_bi) {
+        jmol = molecule[j];
+        if (imol != jmol) {
+          continue;
+        }
+
         tagint tag_j = tag[j]; 
 
         bool found = false;
@@ -322,22 +281,6 @@ void PairNematicAlign::compute(int eflag, int vflag)
       tjx = 0.0;
       tjy = 0.0;
       tjz = 0.0;
-
-      // soft repulsion (if enabled)
-      if (soft_repulsion_flag[itype][jtype]) {
-        double soft_rc = soft_cut[itype][jtype];
-        double Aij = soft_eps[itype][jtype];
-        if (r < soft_rc) {
-          double xarg = M_PI * r / soft_rc;
-          double Sr = Aij * (1.0 + cos(xarg));
-          double dSdr = -Aij * (M_PI / rc) * sin(xarg);
-
-          fx += dSdr * delx * rinv;
-          fy += dSdr * dely * rinv;
-          fz += dSdr * delz * rinv;
-          if (eflag) energy += Sr;
-        }
-      }
 
       // alignment interaction calculation
       rc = cut[itype][jtype];
@@ -460,9 +403,6 @@ void PairNematicAlign::write_restart(FILE *fp)
       fwrite(&setflag[i][j], sizeof(int), 1, fp);
       fwrite(&epsilon[i][j], sizeof(double), 1, fp);
       fwrite(&cut[i][j], sizeof(double), 1, fp);
-      fwrite(&soft_repulsion_flag[i][j], sizeof(int), 1, fp);
-      fwrite(&soft_cut[i][j], sizeof(double), 1, fp);
-      fwrite(&soft_eps[i][j], sizeof(double), 1, fp);
       fwrite(&no_radial_flag[i][j], sizeof(int), 1, fp);
     }
   }
@@ -494,45 +434,7 @@ void PairNematicAlign::read_restart(FILE *fp)
       fread(&setflag[i][j], sizeof(int), 1, fp);
       fread(&epsilon[i][j], sizeof(double), 1, fp);
       fread(&cut[i][j], sizeof(double), 1, fp);
-      fread(&soft_repulsion_flag[i][j], sizeof(int), 1, fp);
-      fread(&soft_cut[i][j], sizeof(double), 1, fp);
-      fread(&soft_eps[i][j], sizeof(double), 1, fp);
       fread(&no_radial_flag[i][j], sizeof(int), 1, fp);
     }
   }
 }
-
-
-// double PairNematicAlign::single(int i, int j, int itype, int jtype, double rsq, double factor_coul,
-//                                 double factor_lj, double &fforce)
-// {
-//   // cutoff guard
-//   double rc = cut[itype][jtype] > 0.0 ? cut[itype][jtype] : cut_global;
-//   if (rsq >= rc * rc) {
-//     fforce = 0.0;
-//     return 0.0;
-//   }
-
-//   double energy = 0.0;
-//   double wca_force_over_r = 0.0;
-
-//   // WCA repulsion (if enabled)
-//   if (soft_repulsion_flag[itype][jtype]) {
-//     double lj_s = lj_sigma[itype][jtype];
-//     double wca_cut = 1.12246204831 * lj_s;
-//     double r = sqrt(rsq);
-//     double rinv = 1 / r;
-//     if (r < wca_cut) {
-//       double lj_e = lj_epsilon[itype][jtype];
-//       double sr2 = lj_s * lj_s / rsq;
-//       double sr6 = sr2 * sr2 * sr2;
-//       double sr12 = sr6 * sr6;
-
-//       wca_force_over_r += 48.0 * lj_e * (sr12 - 0.5 * sr6) * rinv * rinv;
-//       energy += 4.0 * lj_e * (sr12 - sr6) + lj_e;
-//     }
-//   }
-
-//   fforce = -wca_force_over_r * factor_lj;    // -dU/dr
-//   return energy * factor_lj;
-// }

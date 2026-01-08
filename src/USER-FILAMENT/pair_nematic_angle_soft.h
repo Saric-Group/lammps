@@ -31,17 +31,13 @@ class PairNematicSoft : public Pair {
 
  protected:
   double cut_global;
+  int intermol_flag;
 
   double **Aamp;
   double **kappa;
   double **theta0;
   double **c0, **s0; // cached trig
   double **cut;
-
-  int **wca_flag;
-  double **lj_epsilon;
-  double **lj_sigma;
-  double **wca_cutsq;
 
   virtual void allocate();
 };

@@ -38,10 +38,7 @@ class PairNematicAlign : public Pair {
   double **epsilon;
   double **cut;
 
-  int **soft_repulsion_flag;
   int **no_radial_flag;
-  double **soft_cut;
-  double **soft_eps;
 
   char *fix_id;
   FixBackboneInfo *fix_bi;
