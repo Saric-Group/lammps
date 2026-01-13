@@ -27,6 +27,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <iostream>
 
 using namespace LAMMPS_NS;
 using namespace MathConst;
@@ -433,37 +434,42 @@ void PairCosineSquared::compute(int eflag, int vflag)
 
 /* ----------------------------------------------------------------------
    This is used be pair_write;
-   it is called only if rsq < cutsq[itype][jtype], no need to check that
+   @andraz-gnidovec: added check for cutoff also for cosine case for correct bond/react energy-based insertion logic.
 ------------------------------------------------------------------------- */
 
 double PairCosineSquared::single(int /* i */, int /* j */, int itype, int jtype, double rsq,
                          double /* factor_coul */, double factor_lj,
                          double &fforce)
 {
-  double r, r2inv, r6inv, cosone, force, energy;
+  double r, r2inv, r6inv, cosone;
+
+  double energy = 0.0;
+  double force = 0.0;
 
   r = sqrt(rsq);
 
-  if (r <= sigma[itype][jtype]) {
-    if (wcaflag[itype][jtype]) {
-      r2inv = 1.0/rsq;
-      r6inv = r2inv*r2inv*r2inv;
-      force = r6inv*(lj12_f[itype][jtype]*r6inv - lj6_f[itype][jtype])*r2inv;
-      energy = r6inv*(lj12_e[itype][jtype]*r6inv - lj6_e[itype][jtype]);
-      if (sigma[itype][jtype] == cut[itype][jtype]) {
-        // this is the WCA-only case (it requires this shift by definition)
-        energy += epsilon[itype][jtype];
+  if (r <= cutsq[itype][jtype]) {
+    if (r <= sigma[itype][jtype]) {
+      if (wcaflag[itype][jtype]) {
+        r2inv = 1.0/rsq;
+        r6inv = r2inv*r2inv*r2inv;
+        force += r6inv*(lj12_f[itype][jtype]*r6inv - lj6_f[itype][jtype])*r2inv;
+        energy += r6inv*(lj12_e[itype][jtype]*r6inv - lj6_e[itype][jtype]);
+        if (sigma[itype][jtype] == cut[itype][jtype]) {
+          // this is the WCA-only case (it requires this shift by definition)
+          energy += epsilon[itype][jtype];
+        }
+      } else {
+        energy += -epsilon[itype][jtype];
       }
     } else {
-      force = 0.0;
-      energy = -epsilon[itype][jtype];
+      cosone = cos(MY_PI*(r-sigma[itype][jtype]) / (2.0*w[itype][jtype]));
+      force = -(MY_PI*epsilon[itype][jtype] / (2.0*w[itype][jtype])) *
+                  sin(MY_PI*(r-sigma[itype][jtype]) / w[itype][jtype]) / r;
+      energy = -epsilon[itype][jtype]*cosone*cosone;
     }
-  } else {
-    cosone = cos(MY_PI*(r-sigma[itype][jtype]) / (2.0*w[itype][jtype]));
-    force = -(MY_PI*epsilon[itype][jtype] / (2.0*w[itype][jtype])) *
-                 sin(MY_PI*(r-sigma[itype][jtype]) / w[itype][jtype]) / r;
-    energy = -epsilon[itype][jtype]*cosone*cosone;
   }
+
   fforce = factor_lj*force;
   return factor_lj*energy;
 }
