@@ -270,7 +270,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(modify_create_nuccyl_rad,nreacts,"bond/react:modify_create_nuccyl_rad"); // added for cylinder nucleation
   memory->create(modify_create_nuccyl_mod,nreacts,"bond/react:modify_create_nuccyl_mod"); // added for cylinder nucleation
   memory->create(overlapsq,nreacts,"bond/react:overlapsq");
-  memory->create(overlapexcept, nreacts, atom->ntypes, "bond/react:overlapexcept"); // @FelixWodaczek ignore atom types in insertion overlap check
+  memory->create(rxn_is_overlap_typed,nreacts, "bond/react:is_overlap_typed");
+  memory->create(type_overlapsq,nreacts,atom->ntypes,"bond/react:type_overlapsq");
+  memory->create(overlapexcept,nreacts,atom->ntypes, "bond/react:overlapexcept"); // @FelixWodaczek ignore atom types in insertion overlap check
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
   memory->create(nconstraints,nreacts,"bond/react:nconstraints");
   memory->create(constraintstr,nreacts,MAXLINE,"bond/react:constraintstr");
@@ -317,7 +319,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     }
     for (int itype=0; itype<atom->ntypes; itype++) {
       overlapexcept[i][itype] = false; 
+      type_overlapsq[i][itype] = 0.;
     }
+    rxn_is_overlap_typed[i] = false;
   }
 
   char **files;
@@ -507,6 +511,26 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
             overlapsq[rxn] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
             overlapsq[rxn] *= overlapsq[rxn];
             iarg += 2;
+            if (strcmp(arg[iarg], "types") == 0) {
+              int num_overlap_types = utils::inumeric(FLERR, arg[iarg + 1], false, lmp);
+              std::printf("Overlap types: %d\n", num_overlap_types);
+
+              if (iarg + 2 + (2 * num_overlap_types) > narg) error->all(FLERR, "Illegal fix bond/react react modify_create overlap types subcommand: "
+                "'types' has too few arguments. "
+                "Supply a number of special types n_types and then 2 * n_types pairs of atom_type cutoff.");
+              
+              rxn_is_overlap_typed[rxn] = true;
+              for (int itype=0; itype<atom->ntypes; itype++) type_overlapsq[rxn][itype] = overlapsq[rxn];
+
+              for (int otind = 0; otind < num_overlap_types; otind++) {
+                int atype = utils::inumeric(FLERR, arg[iarg + 2 + (2 * otind)], false, lmp);
+                double atype_cutoff = utils::numeric(FLERR, arg[iarg + 3 + (2 * otind)], false, lmp);
+                std::printf("Reaction: %s, atype, cutoff: %d, %f\n", rxn_name[rxn], atype, atype_cutoff);
+                type_overlapsq[rxn][atype] = atype_cutoff;
+                type_overlapsq[rxn][atype] *= type_overlapsq[rxn][atype];
+              }
+              iarg += 2 + (2 * num_overlap_types);
+            }
           } else break;
         }
       } else error->all(FLERR,"Illegal fix bond/react command: unknown keyword");
@@ -4193,7 +4217,11 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
           delz = coords[m][2] - x[i][2];
           domain->minimum_image(FLERR, delx,dely,delz);
           rsq = delx*delx + dely*dely + delz*delz;
-          if (rsq < overlapsq[rxnID]) {
+          std::printf("Crashing at 1.\n");
+          if ( // some evaluation order trickery here, evaluated from left to right
+            (rxn_is_overlap_typed[rxnID] && rsq < type_overlapsq[rxnID][atom->type[i]]) // if overlap typed check only typed overlap
+            || rsq < overlapsq[rxnID] // otherwise check general overlap
+          ) { 
             abortflag = 1;
             break;
           }
@@ -4212,7 +4240,11 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             delz = coords[m][2] - myaddatom.x[2];
             domain->minimum_image(FLERR, delx,dely,delz);
             rsq = delx*delx + dely*dely + delz*delz;
-            if (rsq < overlapsq[rxnID]) {
+            std::printf("Crashing at 2.\n");
+            if ( // some evaluation order trickery here, evaluated from left to right
+              (rxn_is_overlap_typed[rxnID] && rsq < type_overlapsq[rxnID][myaddatom.type]) // if overlap typed check only typed overlap
+              || rsq < overlapsq[rxnID] // otherwise check general overlap
+            ) { 
               abortflag = 1;
               break;
             }
