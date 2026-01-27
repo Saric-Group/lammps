@@ -84,6 +84,8 @@ class FixBondReact : public Fix {
   double *modify_create_nuccyl_rad; // added for cylinder nucleation
   double *modify_create_nuccyl_mod; // added for cylinder nucleation
   double *overlapsq;
+  bool *rxn_is_overlap_typed;
+  double **type_overlapsq;
   bool **overlapexcept; // exception list for overlap checking
   int *molecule_keyword;
   int maxnconstraints;
