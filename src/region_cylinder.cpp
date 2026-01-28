@@ -3,22 +3,18 @@
    https://www.lammps.org/, Sandia National Laboratories
    LAMMPS development team: developers@lammps.org
 
-   Copyright (2003) Sandia Corporation.  Under the terms of Contract
-   DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under
-   the GNU General Public License.
-
-   See the README file in the top-level LAMMPS directory.
+   Copyright (2003) Sandia Corporation.
+   Under the terms of Contract DE-AC04-94AL85000 with Sandia Corporation,
+   the U.S. Government retains certain rights in this software.
+   This software is distributed under the GNU General Public License.
 ------------------------------------------------------------------------- */
 
 #include "region_cylinder.h"
-
 #include "domain.h"
 #include "error.h"
 #include "input.h"
 #include "update.h"
 #include "variable.h"
-
 #include <cmath>
 #include <cstring>
 
@@ -29,12 +25,13 @@ static constexpr double BIG = 1.0e20;
 /* ---------------------------------------------------------------------- */
 
 RegCylinder::RegCylinder(LAMMPS *lmp, int narg, char **arg) :
-    Region(lmp, narg, arg), c1str(nullptr), c2str(nullptr), rstr(nullptr)
+    Region(lmp, narg, arg),
+    c1str(nullptr), c2str(nullptr), rstr(nullptr),
+    lostr(nullptr), histr(nullptr)
 {
-  c1style = c2style = CONSTANT;
+  c1style = c2style = rstyle = CONSTANT;
+  lostyle = histyle = CONSTANT;
   options(narg - 8, &arg[8]);
-
-  // check open face settings
 
   if (openflag)
     for (int i = 3; i < 6; i++)
@@ -44,195 +41,75 @@ RegCylinder::RegCylinder(LAMMPS *lmp, int narg, char **arg) :
     error->all(FLERR, "Illegal region cylinder axis: {}", arg[2]);
   axis = arg[2][0];
 
+  // center coordinates
   if (axis == 'x') {
-    if (utils::strmatch(arg[3], "^v_")) {
-      c1str = utils::strdup(arg[3] + 2);
-      c1 = 0.0;
-      c1style = VARIABLE;
-      varshape = 1;
-    } else {
-      c1 = yscale * utils::numeric(FLERR, arg[3], false, lmp);
-      c1style = CONSTANT;
-    }
-    if (utils::strmatch(arg[4], "^v_")) {
-      c2str = utils::strdup(arg[4] + 2);
-      c2 = 0.0;
-      c2style = VARIABLE;
-      varshape = 1;
-    } else {
-      c2 = zscale * utils::numeric(FLERR, arg[4], false, lmp);
-      c2style = CONSTANT;
-    }
+    if (utils::strmatch(arg[3], "^v_")) { c1str = utils::strdup(arg[3]+2); c1 = 0.0; c1style = VARIABLE; varshape = 1; }
+    else { c1 = utils::numeric(FLERR,arg[3],false,lmp)*yscale; c1style = CONSTANT; }
+    if (utils::strmatch(arg[4], "^v_")) { c2str = utils::strdup(arg[4]+2); c2 = 0.0; c2style = VARIABLE; varshape = 1; }
+    else { c2 = utils::numeric(FLERR,arg[4],false,lmp)*zscale; c2style = CONSTANT; }
   } else if (axis == 'y') {
-    if (utils::strmatch(arg[3], "^v_")) {
-      c1str = utils::strdup(arg[3] + 2);
-      c1 = 0.0;
-      c1style = VARIABLE;
-      varshape = 1;
+    if (utils::strmatch(arg[3], "^v_")) { c1str = utils::strdup(arg[3]+2); c1 = 0.0; c1style = VARIABLE; varshape = 1; }
+    else { c1 = utils::numeric(FLERR,arg[3],false,lmp)*xscale; c1style = CONSTANT; }
+    if (utils::strmatch(arg[4], "^v_")) { c2str = utils::strdup(arg[4]+2); c2 = 0.0; c2style = VARIABLE; varshape = 1; }
+    else { c2 = utils::numeric(FLERR,arg[4],false,lmp)*zscale; c2style = CONSTANT; }
+  } else {
+    if (utils::strmatch(arg[3], "^v_")) { c1str = utils::strdup(arg[3]+2); c1 = 0.0; c1style = VARIABLE; varshape = 1; }
+    else { c1 = utils::numeric(FLERR,arg[3],false,lmp)*xscale; c1style = CONSTANT; }
+    if (utils::strmatch(arg[4], "^v_")) { c2str = utils::strdup(arg[4]+2); c2 = 0.0; c2style = VARIABLE; varshape = 1; }
+    else { c2 = utils::numeric(FLERR,arg[4],false,lmp)*yscale; c2style = CONSTANT; }
+  }
+
+  // radius
+  if (utils::strmatch(arg[5], "^v_")) { rstr = utils::strdup(arg[5]+2); radius = 0.0; rstyle = VARIABLE; varshape = 1; }
+  else { radius = utils::numeric(FLERR,arg[5],false,lmp); if (axis=='x') radius*=yscale; else radius*=xscale; rstyle = CONSTANT; }
+
+  // low bound lo
+  if (utils::strmatch(arg[6], "^v_")) { lostr = utils::strdup(arg[6]+2); lo = 0.0; lostyle = VARIABLE; varshape = 1; }
+  else {
+    if (strcmp(arg[6],"INF")==0) lo=-BIG;
+    else if (strcmp(arg[6],"EDGE")==0) {
+      if (axis=='x') lo = domain->triclinic?domain->boxlo_bound[0]:domain->boxlo[0];
+      if (axis=='y') lo = domain->triclinic?domain->boxlo_bound[1]:domain->boxlo[1];
+      if (axis=='z') lo = domain->triclinic?domain->boxlo_bound[2]:domain->boxlo[2];
     } else {
-      c1 = xscale * utils::numeric(FLERR, arg[3], false, lmp);
-      c1style = CONSTANT;
-    }
-    if (utils::strmatch(arg[4], "^v_")) {
-      c2str = utils::strdup(arg[4] + 2);
-      c2 = 0.0;
-      c2style = VARIABLE;
-      varshape = 1;
-    } else {
-      c2 = zscale * utils::numeric(FLERR, arg[4], false, lmp);
-      c2style = CONSTANT;
-    }
-  } else if (axis == 'z') {
-    if (utils::strmatch(arg[3], "^v_")) {
-      c1str = utils::strdup(arg[3] + 2);
-      c1 = 0.0;
-      c1style = VARIABLE;
-      varshape = 1;
-    } else {
-      c1 = xscale * utils::numeric(FLERR, arg[3], false, lmp);
-      c1style = CONSTANT;
-    }
-    if (utils::strmatch(arg[4], "^v_")) {
-      c2str = utils::strdup(arg[4] + 2);
-      c2 = 0.0;
-      c2style = VARIABLE;
-      varshape = 1;
-    } else {
-      c2 = yscale * utils::numeric(FLERR, arg[4], false, lmp);
-      c2style = CONSTANT;
+      if (axis=='x') lo = utils::numeric(FLERR,arg[6],false,lmp)*xscale;
+      if (axis=='y') lo = utils::numeric(FLERR,arg[6],false,lmp)*yscale;
+      if (axis=='z') lo = utils::numeric(FLERR,arg[6],false,lmp)*zscale;
     }
   }
 
-  if (utils::strmatch(arg[5], "^v_")) {
-    rstr = utils::strdup(arg[5] + 2);
-    radius = 0.0;
-    rstyle = VARIABLE;
-    varshape = 1;
-  } else {
-    radius = utils::numeric(FLERR, arg[5], false, lmp);
-    if (axis == 'x')
-      radius *= yscale;
-    else
-      radius *= xscale;
-    rstyle = CONSTANT;
+  // high bound hi
+  if (utils::strmatch(arg[7], "^v_")) { histr = utils::strdup(arg[7]+2); hi = 0.0; histyle = VARIABLE; varshape = 1; }
+  else {
+    if (strcmp(arg[7],"INF")==0) hi=BIG;
+    else if (strcmp(arg[7],"EDGE")==0) {
+      if (axis=='x') hi = domain->triclinic?domain->boxhi_bound[0]:domain->boxhi[0];
+      if (axis=='y') hi = domain->triclinic?domain->boxhi_bound[1]:domain->boxhi[1];
+      if (axis=='z') hi = domain->triclinic?domain->boxhi_bound[2]:domain->boxhi[2];
+    } else {
+      if (axis=='x') hi = utils::numeric(FLERR,arg[7],false,lmp)*xscale;
+      if (axis=='y') hi = utils::numeric(FLERR,arg[7],false,lmp)*yscale;
+      if (axis=='z') hi = utils::numeric(FLERR,arg[7],false,lmp)*zscale;
+    }
   }
 
   if (varshape) {
     variable_check();
-    RegCylinder::shape_update();
+    shape_update();
   }
 
-  if (strcmp(arg[6], "INF") == 0 || strcmp(arg[6], "EDGE") == 0) {
-    if (domain->box_exist == 0)
-      error->all(FLERR, "Cannot use region INF or EDGE when box does not exist");
-    if (axis == 'x') {
-      if (strcmp(arg[6], "INF") == 0)
-        lo = -BIG;
-      else if (domain->triclinic == 0)
-        lo = domain->boxlo[0];
-      else
-        lo = domain->boxlo_bound[0];
-    }
-    if (axis == 'y') {
-      if (strcmp(arg[6], "INF") == 0)
-        lo = -BIG;
-      else if (domain->triclinic == 0)
-        lo = domain->boxlo[1];
-      else
-        lo = domain->boxlo_bound[1];
-    }
-    if (axis == 'z') {
-      if (strcmp(arg[6], "INF") == 0)
-        lo = -BIG;
-      else if (domain->triclinic == 0)
-        lo = domain->boxlo[2];
-      else
-        lo = domain->boxlo_bound[2];
-    }
-  } else {
-    if (axis == 'x') lo = xscale * utils::numeric(FLERR, arg[6], false, lmp);
-    if (axis == 'y') lo = yscale * utils::numeric(FLERR, arg[6], false, lmp);
-    if (axis == 'z') lo = zscale * utils::numeric(FLERR, arg[6], false, lmp);
-  }
-
-  if (strcmp(arg[7], "INF") == 0 || strcmp(arg[7], "EDGE") == 0) {
-    if (domain->box_exist == 0)
-      error->all(FLERR, "Cannot use region INF or EDGE when box does not exist");
-    if (axis == 'x') {
-      if (strcmp(arg[7], "INF") == 0)
-        hi = BIG;
-      else if (domain->triclinic == 0)
-        hi = domain->boxhi[0];
-      else
-        hi = domain->boxhi_bound[0];
-    }
-    if (axis == 'y') {
-      if (strcmp(arg[7], "INF") == 0)
-        hi = BIG;
-      else if (domain->triclinic == 0)
-        hi = domain->boxhi[1];
-      else
-        hi = domain->boxhi_bound[1];
-    }
-    if (axis == 'z') {
-      if (strcmp(arg[7], "INF") == 0)
-        hi = BIG;
-      else if (domain->triclinic == 0)
-        hi = domain->boxhi[2];
-      else
-        hi = domain->boxhi_bound[2];
-    }
-  } else {
-    if (axis == 'x') hi = xscale * utils::numeric(FLERR, arg[7], false, lmp);
-    if (axis == 'y') hi = yscale * utils::numeric(FLERR, arg[7], false, lmp);
-    if (axis == 'z') hi = zscale * utils::numeric(FLERR, arg[7], false, lmp);
-  }
-
-  // error check
-
-  if (radius <= 0.0) error->all(FLERR, "Illegal radius {} in region cylinder command", radius);
-
-  // extent of cylinder
-  // for variable radius, uses initial radius
+  if (radius <= 0.0) error->all(FLERR,"Illegal radius {} in region cylinder command",radius);
 
   if (interior) {
     bboxflag = 1;
-    if (axis == 'x') {
-      extent_xlo = lo;
-      extent_xhi = hi;
-      extent_ylo = c1 - radius;
-      extent_yhi = c1 + radius;
-      extent_zlo = c2 - radius;
-      extent_zhi = c2 + radius;
-    }
-    if (axis == 'y') {
-      extent_xlo = c1 - radius;
-      extent_xhi = c1 + radius;
-      extent_ylo = lo;
-      extent_yhi = hi;
-      extent_zlo = c2 - radius;
-      extent_zhi = c2 + radius;
-    }
-    if (axis == 'z') {
-      extent_xlo = c1 - radius;
-      extent_xhi = c1 + radius;
-      extent_ylo = c2 - radius;
-      extent_yhi = c2 + radius;
-      extent_zlo = lo;
-      extent_zhi = hi;
-    }
-  } else
-    bboxflag = 0;
+    if (axis=='x')      { extent_xlo=lo; extent_xhi=hi; extent_ylo=c1-radius; extent_yhi=c1+radius; extent_zlo=c2-radius; extent_zhi=c2+radius; }
+    else if (axis=='y') { extent_xlo=c1-radius; extent_xhi=c1+radius; extent_ylo=lo; extent_yhi=hi; extent_zlo=c2-radius; extent_zhi=c2+radius; }
+    else                { extent_xlo=c1-radius; extent_xhi=c1+radius; extent_ylo=c2-radius; extent_yhi=c2+radius; extent_zlo=lo; extent_zhi=hi; }
+  } else bboxflag=0;
 
-  // particle could be close to cylinder surface and 2 ends
-  // particle can only touch surface and 1 end
-
-  cmax = 3;
+  cmax=3;
   contact = new Contact[cmax];
-  if (interior)
-    tmax = 2;
-  else
-    tmax = 1;
+  tmax = interior?2:1;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -242,6 +119,8 @@ RegCylinder::~RegCylinder()
   delete[] c1str;
   delete[] c2str;
   delete[] rstr;
+  delete[] lostr;
+  delete[] histr;
   delete[] contact;
 }
 
@@ -253,43 +132,43 @@ void RegCylinder::init()
   if (varshape) variable_check();
 }
 
-/* ----------------------------------------------------------------------
-   inside = 1 if x,y,z is inside or on surface
-   inside = 0 if x,y,z is outside and not on surface
-------------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- */
+
+void RegCylinder::shape_update()
+{
+  if(c1style==VARIABLE) c1 = input->variable->compute_equal(c1var);
+  if(c2style==VARIABLE) c2 = input->variable->compute_equal(c2var);
+  if(rstyle==VARIABLE) {
+    radius = input->variable->compute_equal(rvar);
+    if(radius<0.0) error->one(FLERR,"Variable evaluation in region gave bad value");
+  }
+  if(lostyle==VARIABLE) lo = input->variable->compute_equal(lovar);
+  if(histyle==VARIABLE) hi = input->variable->compute_equal(hivar);
+
+  if(axis=='x'){ if(c1style==VARIABLE)c1*=yscale; if(c2style==VARIABLE)c2*=zscale; if(rstyle==VARIABLE)radius*=yscale; if(lostyle==VARIABLE)lo*=xscale; if(histyle==VARIABLE)hi*=xscale; }
+  else if(axis=='y'){ if(c1style==VARIABLE)c1*=xscale; if(c2style==VARIABLE)c2*=zscale; if(rstyle==VARIABLE)radius*=xscale; if(lostyle==VARIABLE)lo*=yscale; if(histyle==VARIABLE)hi*=yscale; }
+  else{ if(c1style==VARIABLE)c1*=xscale; if(c2style==VARIABLE)c2*=yscale; if(rstyle==VARIABLE)radius*=xscale; if(lostyle==VARIABLE)lo*=zscale; if(histyle==VARIABLE)hi*=zscale; }
+}
+
+/* ---------------------------------------------------------------------- */
+
+void RegCylinder::variable_check()
+{
+  if(c1style==VARIABLE){ c1var=input->variable->find(c1str); if(c1var<0) error->all(FLERR,"Variable {} for region cylinder does not exist",c1str); if(!input->variable->equalstyle(c1var)) error->all(FLERR,"Variable {} for region cylinder is invalid style",c1str);}
+  if(c2style==VARIABLE){ c2var=input->variable->find(c2str); if(c2var<0) error->all(FLERR,"Variable {} for region cylinder does not exist",c2str); if(!input->variable->equalstyle(c2var)) error->all(FLERR,"Variable {} for region cylinder is invalid style",c2str);}
+  if(rstyle==VARIABLE){ rvar=input->variable->find(rstr); if(rvar<0) error->all(FLERR,"Variable {} for region cylinder does not exist",rstr); if(!input->variable->equalstyle(rvar)) error->all(FLERR,"Variable {} for region cylinder is invalid style",rstr);}
+  if(lostyle==VARIABLE){ lovar=input->variable->find(lostr); if(lovar<0) error->all(FLERR,"Variable {} for region cylinder does not exist",lostr); if(!input->variable->equalstyle(lovar)) error->all(FLERR,"Variable {} for region cylinder is invalid style",lostr);}
+  if(histyle==VARIABLE){ hivar=input->variable->find(histr); if(hivar<0) error->all(FLERR,"Variable {} for region cylinder does not exist",histr); if(!input->variable->equalstyle(hivar)) error->all(FLERR,"Variable {} for region cylinder is invalid style",histr);}
+}
+
+/* ---------------------------------------------------------------------- */
 
 int RegCylinder::inside(double x, double y, double z)
 {
   double del1, del2, dist;
-  int inside;
-
-  if (axis == 'x') {
-    del1 = y - c1;
-    del2 = z - c2;
-    dist = sqrt(del1 * del1 + del2 * del2);
-    if (dist <= radius && x >= lo && x <= hi)
-      inside = 1;
-    else
-      inside = 0;
-  } else if (axis == 'y') {
-    del1 = x - c1;
-    del2 = z - c2;
-    dist = sqrt(del1 * del1 + del2 * del2);
-    if (dist <= radius && y >= lo && y <= hi)
-      inside = 1;
-    else
-      inside = 0;
-  } else {
-    del1 = x - c1;
-    del2 = y - c2;
-    dist = sqrt(del1 * del1 + del2 * del2);
-    if (dist <= radius && z >= lo && z <= hi)
-      inside = 1;
-    else
-      inside = 0;
-  }
-
-  return inside;
+  if(axis=='x'){ del1=y-c1; del2=z-c2; dist=sqrt(del1*del1+del2*del2); return (dist<=radius && x>=lo && x<=hi)?1:0; }
+  else if(axis=='y'){ del1=x-c1; del2=z-c2; dist=sqrt(del1*del1+del2*del2); return (dist<=radius && y>=lo && y<=hi)?1:0; }
+  else { del1=x-c1; del2=y-c2; dist=sqrt(del1*del1+del2*del2); return (dist<=radius && z>=lo && z<=hi)?1:0; }
 }
 
 /* ----------------------------------------------------------------------
@@ -756,61 +635,6 @@ int RegCylinder::surface_exterior(double *x, double cutoff)
   }
 }
 
-/* ----------------------------------------------------------------------
-   change region shape via variable evaluation
-------------------------------------------------------------------------- */
-
-void RegCylinder::shape_update()
-{
-  if (c1style == VARIABLE) c1 = input->variable->compute_equal(c1var);
-  if (c2style == VARIABLE) c2 = input->variable->compute_equal(c2var);
-  if (rstyle == VARIABLE) {
-    radius = input->variable->compute_equal(rvar);
-    if (radius < 0.0) error->one(FLERR, "Variable evaluation in region gave bad value");
-  }
-
-  if (axis == 'x') {
-    if (c1style == VARIABLE) c1 *= yscale;
-    if (c2style == VARIABLE) c2 *= zscale;
-    if (rstyle == VARIABLE) radius *= yscale;
-  } else if (axis == 'y') {
-    if (c1style == VARIABLE) c1 *= xscale;
-    if (c2style == VARIABLE) c2 *= zscale;
-    if (rstyle == VARIABLE) radius *= xscale;
-  } else {    // axis == 'z'
-    if (c1style == VARIABLE) c1 *= xscale;
-    if (c2style == VARIABLE) c2 *= yscale;
-    if (rstyle == VARIABLE) radius *= xscale;
-  }
-}
-
-/* ----------------------------------------------------------------------
-   error check on existence of variable
-------------------------------------------------------------------------- */
-
-void RegCylinder::variable_check()
-{
-  if (c1style == VARIABLE) {
-    c1var = input->variable->find(c1str);
-    if (c1var < 0) error->all(FLERR, "Variable {} for region cylinder does not exist", c1str);
-    if (!input->variable->equalstyle(c1var))
-      error->all(FLERR, "Variable {} for region cylinder is invalid style", c1str);
-  }
-
-  if (c2style == VARIABLE) {
-    c2var = input->variable->find(c2str);
-    if (c2var < 0) error->all(FLERR, "Variable {} for region cylinder does not exist", c2str);
-    if (!input->variable->equalstyle(c2var))
-      error->all(FLERR, "Variable {} for region cylinder is invalid style", c2str);
-  }
-
-  if (rstyle == VARIABLE) {
-    rvar = input->variable->find(rstr);
-    if (rvar < 0) error->all(FLERR, "Variable {} for region cylinder does not exist", rstr);
-    if (!input->variable->equalstyle(rvar))
-      error->all(FLERR, "Variable {} for region cylinder is invalid style", rstr);
-  }
-}
 
 /* ----------------------------------------------------------------------
    Set values needed to calculate velocity due to shape changes.

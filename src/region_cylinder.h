@@ -3,12 +3,10 @@
    https://www.lammps.org/, Sandia National Laboratories
    LAMMPS development team: developers@lammps.org
 
-   Copyright (2003) Sandia Corporation.  Under the terms of Contract
-   DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under
-   the GNU General Public License.
-
-   See the README file in the top-level LAMMPS directory.
+   Copyright (2003) Sandia Corporation.
+   Under the terms of Contract DE-AC04-94AL85000 with Sandia Corporation,
+   the U.S. Government retains certain rights in this software.
+   This software is distributed under the GNU General Public License.
 ------------------------------------------------------------------------- */
 
 #ifdef REGION_CLASS
@@ -44,10 +42,15 @@ class RegCylinder : public Region {
   double c1, c2;
   double radius;
   double lo, hi;
+
   int c1style, c1var;
   int c2style, c2var;
   int rstyle, rvar;
+  int lostyle, histyle;
+  int lovar, hivar;
+
   char *c1str, *c2str, *rstr;
+  char *lostr, *histr;
 
   void variable_check();
 };

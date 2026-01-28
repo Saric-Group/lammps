@@ -4051,6 +4051,8 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
     tagint iatom;
     tagint iref = -1; // choose first atom as reference
     int fit_incr = 0;
+    double ang = 2*M_PI*random[rxnID]->uniform(); //set random angle here so that it is shared by all particles in the trimer
+    
     for (int j = 0; j < twomol->natoms; j++) {
       if (modify_create_fragid[rxnID] >= 0) // skip over all not involved atoms if not all atoms are used for the fit
         if (!twomol->fragmentmask[modify_create_fragid[rxnID]][j]) continue;
@@ -4103,7 +4105,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         }
         else if (modify_create_nucrand[rxnID] > 1) {
           // Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
-          double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
+          // random angle (from individual reaction RNG) - Chris 26/09/2023
           if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID] - Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
             xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
             // Two RN -> 1 Normal-distributed number
@@ -4118,9 +4120,10 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             xfrozen[fit_incr][2] = 0.0; 
           }
         }
-        if (modify_create_nuc_from_trimer[rxnID] == 1) { // Marija 03.12.2025 - making a parallel of Chris' flag but to support a trimer based nucleation to give the particles some orientation - assuming all three particles are in the XY plane(first two particles define the X axis, the third defines the Y axis), to allow 2D simulations but to give the dimer directionality
-          double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
+        else if (modify_create_nuc_from_trimer[rxnID] == 1) { // Marija 03.12.2025 - making a parallel of Chris' flag but to support a trimer based nucleation to give the particles some orientation - assuming all three particles are in the XY plane(first two particles define the X axis, the third defines the Y axis), to allow 2D simulations but to give the dimer directionality
+          // random angle (from individual reaction RNG) - Chris 26/09/2023
           if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID]
+            
             xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
             xfrozen[fit_incr][1] = (domain->boxhi[1] - domain->boxlo[1]) * (random[rxnID]->uniform()-0.5);
             xfrozen[fit_incr][2] = 0;
@@ -4130,11 +4133,11 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             xfrozen[fit_incr][1] = xfrozen[0][1] + sin(ang);
             xfrozen[fit_incr][2] = 0;
           }
-          else  { //adding third particle bonded with the initial two with a bond of rest length 1  - position in xy (0.5, sqrt(3)/2,0)
+          else  { //adding third particle bonded with the initial two with a bond of rest length 1  - position in xy (0.5, 0,2.0)
 
-            xfrozen[fit_incr][0] = xfrozen[0][0] + 1/2*cos(ang);
-            xfrozen[fit_incr][1] = xfrozen[0][1] + 1/2*sin(ang);
-            xfrozen[fit_incr][2] = 2.0; //modified 04.12. to form an isosceles triangle 
+            xfrozen[fit_incr][0] = xfrozen[0][0] + 0.5*cos(ang);
+            xfrozen[fit_incr][1] = xfrozen[0][1] + 0.5*sin(ang);
+            xfrozen[fit_incr][2] = 2.0;  
           }
         }
         else if (modify_create_nuc_from_trimer[rxnID] == 0) { // only positive X orientation! -- Chris 27/07/2023
