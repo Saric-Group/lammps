@@ -270,12 +270,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(modify_create_nuccyl_rad,nreacts,"bond/react:modify_create_nuccyl_rad"); // added for cylinder nucleation
   memory->create(modify_create_nuccyl_mod,nreacts,"bond/react:modify_create_nuccyl_mod"); // added for cylinder nucleation
   memory->create(overlapsq,nreacts,"bond/react:overlapsq");
-  memory->create(rxn_is_overlap_typed,nreacts, "bond/react:is_overlap_typed");
-  memory->create(type_overlapsq,nreacts,atom->ntypes,"bond/react:type_overlapsq");
   memory->create(overlapexcept,nreacts,atom->ntypes, "bond/react:overlapexcept"); // @FelixWodaczek ignore atom types in insertion overlap check
-  memory->create(rxn_is_overlap_typed,nreacts, "bond/react:is_overlap_typed");
-  memory->create(type_overlapsq,nreacts,atom->ntypes,"bond/react:type_overlapsq");
-  memory->create(overlapexcept,nreacts,atom->ntypes, "bond/react:overlapexcept"); // @FelixWodaczek ignore atom types in insertion overlap check
+  memory->create(rxn_is_overlap_typed,nreacts, "bond/react:is_overlap_typed"); // @FelixWodaczek make per-particle overlap cutoffs
+  memory->create(type_overlapsq,nreacts,atom->ntypes,"bond/react:type_overlapsq"); // @FelixWodaczek make per-particle overlap cutoffs
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
   memory->create(nconstraints,nreacts,"bond/react:nconstraints");
   memory->create(constraintstr,nreacts,MAXLINE,"bond/react:constraintstr");
@@ -323,9 +320,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     for (int itype=0; itype<atom->ntypes; itype++) {
       overlapexcept[i][itype] = false; 
       type_overlapsq[i][itype] = 0.;
-      type_overlapsq[i][itype] = 0.;
     }
-    rxn_is_overlap_typed[i] = false;
     rxn_is_overlap_typed[i] = false;
   }
 
