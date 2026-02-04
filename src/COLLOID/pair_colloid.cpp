@@ -488,6 +488,13 @@ double PairColloid::single(int /*i*/, int /*j*/, int itype, int jtype, double rs
   case SMALL_LARGE:
     c2 = a2[itype][jtype];
     K[1] = c2*c2;
+    // andraz-gnidovec: explicit large energy for overlapping particles
+    // Used with bond/react energy-based particle insertions
+    if (rsq <= K[1]) {
+      fforce = 0.0;
+      phi = 1000000;
+      break;
+    }
     K[2] = rsq;
     K[0] = K[1] - rsq;
     K[4] = rsq*rsq;
