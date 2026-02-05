@@ -4474,25 +4474,10 @@ if (overlap_mode[rxnID] != OVERLAP_OFF) {
 
         // locally update mega_glove
         my_update_mega_glove[preID][iupdate] = myaddatom.tag;
-        
-        int n = atom->nlocal - 1;
-        // !! could do better job choosing mol ID for added atoms
-        // Chris 12/10/2023: replaced the logic for assigning molecule IDs here
-        if (atom->molecule_flag) {
-          if (twomol->moleculeflag) {
-            if (twomol->molecule[m] > 0) {
-              myaddatom.molecule = twomol->molecule[m];
-            } else {
-              myaddatom.molecule = molinit;
-            }
-          } else {
-            myaddatom.molecule = maxmol_all + 1;
-          }
-        }
 
         myaddatom.mask = 1 | groupbit;
         myaddatom.image = imageflags[m];
-        // Save polymerisation / nucleation time to atom variable
+        if (atom->molecule_flag) myaddatom.molecule = 0;
 
         // guess a somewhat reasonable initial velocity based on reaction site
         // further control is possible using bond_react_MASTER_group
