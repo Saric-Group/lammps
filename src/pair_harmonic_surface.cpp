@@ -138,33 +138,33 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       if (rsq < cutsq[itype][jtype]) {
         const double r = sqrt(rsq);
         costheta_max = r_zero[itype][jtype] / cut[itype][jtype];
-        const double align = std::abs(delx * normx + dely * normy + delz * normz) / r; // [0, 1] alignment of delta with surface normal. TODO: properly calculate normals
+        const double align = std::abs(delx * normx + dely * normy + delz * normz) / r; // [0, 1] alignment of delta with surface normal.
         double theta_fact = (align - costheta_max) / (1.0 - costheta_max); // linear decay of force magnitude when going away from ideal alignment
         theta_fact = theta_fact > 0 ? theta_fact : 0;
         double delta = r_zero[itype][jtype] - r;
         const double prefactor = factor_lj * delta * k[itype][jtype] * theta_fact;
-        const double fpair = 2.0 * prefactor / r;
+        const double fpair = 2.0 * prefactor; //  / r;
         
         if (itype == surface_type) {
           // fpair is negative when larger than r_zero
           // therefore change sign here to move surface atoms inwards
           // therefore along normal, this should point inwards
-          fxtmp -= align * fpair * normx;
-          fytmp -= align * fpair * normy;
-          fztmp -= align * fpair * normz;
+          fxtmp -= fpair * normx; // align * 
+          fytmp -= fpair * normy; // align * 
+          fztmp -= fpair * normz; // align * 
           if (newton_pair || j < nlocal) {
-              f[j][0] += align * fpair * normx;
-              f[j][1] += align * fpair * normy;
-              f[j][2] += align * fpair * normz;
+              f[j][0] += fpair * normx; // align * 
+              f[j][1] += fpair * normy; // align * 
+              f[j][2] += fpair * normz; // align * 
           }
         } else if (jtype == surface_type) {
-          fxtmp += align * fpair * normx;
-          fytmp += align * fpair * normy;
-          fztmp += align * fpair * normz;
+          fxtmp += fpair * normx; // align * 
+          fytmp += fpair * normy; // align * 
+          fztmp += fpair * normz; // align * 
           if (newton_pair || j < nlocal) {
-              f[j][0] -= align * fpair * normx;
-              f[j][1] -= align * fpair * normy;
-              f[j][2] -= align * fpair * normz;
+              f[j][0] -= fpair * normx; // align * 
+              f[j][1] -= fpair * normy; // align * 
+              f[j][2] -= fpair * normz; // align * 
           }
         } else {
           error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
@@ -380,7 +380,7 @@ double PairHarmonicSurface::single(int i, int j, int itype, int jtype, double rs
     fforce = 0.0;
     return 0.0;
   }
-  error->all(FLERR, "Using single on accident");
+  error->all(FLERR, "Single not implemented for pair style harmonic/surface");
   const double delx = atom->x[i][0] - atom->x[j][0];
   const double dely = atom->x[i][1] - atom->x[j][1];
   const double delz = atom->x[i][2] - atom->x[j][2];
@@ -398,6 +398,7 @@ void PairHarmonicSurface::born_matrix(int i, int j, int itype, int jtype, double
                             double /*factor_coul*/, double factor_lj, double &dupair,
                             double &du2pair)
 {
+  error->all(FLERR, "Born matrix not implemented for pair style harmonic/surface");
   const double delx = atom->x[i][0] - atom->x[j][0];
   const double dely = atom->x[i][1] - atom->x[j][1];
   const double delz = atom->x[i][2] - atom->x[j][2];
