@@ -3476,6 +3476,16 @@ void FixBondReact::update_everything()
 
     // mark to-delete atoms
     nlocal = atom->nlocal;
+
+    // @andraz-gnidovec: refresh pointers if adding atoms triggered memory allocation
+    type = atom->type;
+    nspecial = atom->nspecial;
+    special = atom->special;
+    tag = atom->tag;
+    bond_type = atom->bond_type;
+    bond_atom = atom->bond_atom;
+    num_bond = atom->num_bond;
+
     if (nlocal > nmark) {
       memory->grow(mark,nlocal,"bond/react:mark");
       for (int i = nmark; i < nlocal; i++) mark[i] = 0;
