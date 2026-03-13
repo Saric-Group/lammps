@@ -51,6 +51,7 @@ PairHarmonicSurface::~PairHarmonicSurface()
     memory->destroy(r_zero);
     memory->destroy(cut);
     memory->destroy(cutsq);
+    memory->destroy(normal_factor);
   }
 }
 
@@ -58,7 +59,7 @@ PairHarmonicSurface::~PairHarmonicSurface()
 
 void PairHarmonicSurface::compute(int eflag, int vflag)
 {
-  int i, j, ii, jj, inum, jnum, itype, jtype, isurf;
+  int i, j, ii, jj, inum, jnum, itype, jtype, isurf, iinteract;
   double xtmp, ytmp, ztmp, fxtmp, fytmp, fztmp;
   double delx, dely, delz, rsq, factor_lj;
   double normx, normy, normz, normr, rotation[3][3];
@@ -87,9 +88,6 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
 
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
     itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
@@ -100,24 +98,23 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       factor_lj = special_lj[sbmask(j)];
       j &= NEIGHMASK;
 
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
-      rsq = delx * delx + dely * dely + delz * delz;
-      jtype = type[j];
-
       // determine normal vector at surface atom
       if (jtype == surface_type) {
         isurf = j;
+        iinteract = i;
       } else if (itype == surface_type) {
         isurf = i;
+        iinteract = j;
       } else {
+        continue; // not interacting with surface, skip quietly
         error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
       }
-      // simply set normal vectors as pointing radially inward this way:
-      // normx = - x[isurf][0];
-      // normy = 0;
-      // normz = - x[isurf][2];
+
+      delx = x[iinteract][0] - x[isurf][0];
+      dely = x[iinteract][1] - x[isurf][1];
+      delz = x[iinteract][2] - x[isurf][2];
+      rsq = delx * delx + dely * dely + delz * delz;
+      jtype = type[j];
 
       if (!atom->ellipsoid_flag) error->all(FLERR, "Atom with index %d and type %d is not an ellipsoid, cannot obtain normal for pair style harmonic/surface", isurf, surface_type);
       // taken from pair_ylz.cpp
@@ -141,7 +138,7 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
         const double align = std::abs(delx * normx + dely * normy + delz * normz) / r; // [0, 1] alignment of delta with surface normal.
         double theta_fact = (align - costheta_max) / (1.0 - costheta_max); // linear decay of force magnitude when going away from ideal alignment
         theta_fact = theta_fact > 0 ? theta_fact : 0;
-        double delta = r_zero[itype][jtype] - r;
+        double delta = r_zero[itype][jtype] - (r * align); // only consider distance along normal for harmonic potential
         const double prefactor = factor_lj * delta * k[itype][jtype] * theta_fact;
         const double fpair = 2.0 * prefactor; //  / r;
         

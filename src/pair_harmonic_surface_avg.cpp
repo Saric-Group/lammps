@@ -62,7 +62,7 @@ PairHarmonicSurfaceAvg::~PairHarmonicSurfaceAvg()
 
 void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
 {
-  int i, j, ii, jj, inum, jnum, itype, jtype, isurf, iinteract, ilocal_interact;
+  int i, j, ii, jj, inum, jnum, itype, jtype, isurf, iinteract;
   double xtmp, ytmp, ztmp, fxtmp, fytmp, fztmp;
   double delx, dely, delz, rsq, factor_lj;
   double normx, normy, normz, normr, rotation[3][3], multiplicity;
@@ -113,24 +113,24 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
       j &= NEIGHMASK;
       jtype = type[j];
 
+      // determine normal vector at surface atom
+      if (jtype == surface_type) {
+        isurf = j;
+        iinteract = i;
+      } else if (itype == surface_type) {
+        isurf = i;
+        iinteract = j;
+      } else {
+        continue; // not interacting with surface, skip quietly
+        error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
+      }
+
       delx = x[i][0] - x[j][0];
       dely = x[i][1] - x[j][1];
       delz = x[i][2] - x[j][2];
       rsq = delx * delx + dely * dely + delz * delz;
       if (rsq >= cutsq[itype][jtype]) continue;
 
-      // determine normal vector at surface atom
-      if (jtype == surface_type) {
-        isurf = j;
-        iinteract = i;
-        ilocal_interact = ii;
-      } else if (itype == surface_type) {
-        isurf = i;
-        iinteract = j;
-        ilocal_interact = jj;
-      } else {
-        error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
-      }
       // simply set normal vectors as pointing radially inward this way:
       // normx = - x[isurf][0];
       // normy = 0;
@@ -192,11 +192,9 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
       if (jtype == surface_type) {
         isurf = j;
         iinteract = i;
-        ilocal_interact = ii;
       } else if (itype == surface_type) {
         isurf = i;
         iinteract = j;
-        ilocal_interact = jj;
       } else {
         error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
       }
