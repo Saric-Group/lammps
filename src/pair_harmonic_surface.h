@@ -42,12 +42,18 @@ class PairHarmonicSurface : public Pair {
   void born_matrix(int, int, int, int, double, double, double, double &, double &) override;
   void *extract(const char *, int &) override;
 
+  int pack_forward_comm(int, int *, double *, int, int *) override;
+  void unpack_forward_comm(int, int, double *) override;
+
  protected:
   double **k, **r_zero, **cut;
   int **normal_factor;
   int surface_type; // atom-type of particles to obtain normal from, must be ellipsoids
 
   class AtomVecEllipsoid *avec; // to access orientation of ellipsoids
+
+  int *nnvec_contributors;
+  double **avg_nvecs;
 
   virtual void allocate();
 };
