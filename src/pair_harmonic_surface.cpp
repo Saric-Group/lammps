@@ -39,7 +39,6 @@ PairHarmonicSurface::PairHarmonicSurface(LAMMPS *lmp) : Pair(lmp), k(nullptr), r
 {
   born_matrix_enable = 1;
   writedata = 1;
-  comm_forward = 4;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -59,17 +58,11 @@ PairHarmonicSurface::~PairHarmonicSurface()
 
 void PairHarmonicSurface::compute(int eflag, int vflag)
 {
-  int i, j, ii, jj, inum, jnum, itype, jtype, isurf, iinteract, ilocal_interact;
+  int i, j, ii, jj, inum, jnum, itype, jtype, isurf;
   double xtmp, ytmp, ztmp, fxtmp, fytmp, fztmp;
   double delx, dely, delz, rsq, factor_lj;
-  double normx, normy, normz, normr, rotation[3][3], multiplicity;
+  double normx, normy, normz, normr, rotation[3][3];
   int *ilist, *jlist, *numneigh, **firstneigh;
-
-  // int flag,cols;
-  // int cont_ind = atom->find_custom("nnvec_contributors", flag, cols);
-  // int *nnvec_contributors; // = atom->ivector[cont_ind];
-  // int nvec_ind = atom->find_custom("avg_nvecs", flag, cols);
-  // double **avg_nvecs_local, **avg_nvecs_global; // = atom->darray[nvec_ind];
 
   double costheta_max;
 
@@ -90,41 +83,34 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
   avec = dynamic_cast<AtomVecEllipsoid *>(atom->style_match("ellipsoid"));
   if (!avec) error->all(FLERR, "Pair style harmonic/surface requires atom style ellipsoid");
 
-  // zero out normal vector contributors and average normal vectors for each atom
-  for (ii = 0; ii < nlocal; ii++) {
-    nnvec_contributors[ii] = 0;
-    avg_nvecs[ii][0] = 0.0;
-    avg_nvecs[ii][1] = 0.0;
-    avg_nvecs[ii][2] = 0.0;
-  }
+  // loop over neighbors of my atoms
 
-  // fill normal vectors with averages of nearest interaction partners
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
+    xtmp = x[i][0];
+    ytmp = x[i][1];
+    ztmp = x[i][2];
     itype = type[i];
     jlist = firstneigh[i];
     jnum = numneigh[i];
+    fxtmp = fytmp = fztmp = 0.0;
+
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
       factor_lj = special_lj[sbmask(j)];
       j &= NEIGHMASK;
-      jtype = type[j];
 
-      delx = x[i][0] - x[j][0];
-      dely = x[i][1] - x[j][1];
-      delz = x[i][2] - x[j][2];
+      delx = xtmp - x[j][0];
+      dely = ytmp - x[j][1];
+      delz = ztmp - x[j][2];
       rsq = delx * delx + dely * dely + delz * delz;
-      if (rsq >= cutsq[itype][jtype]) continue;
+      jtype = type[j];
 
       // determine normal vector at surface atom
       if (jtype == surface_type) {
         isurf = j;
-        iinteract = i;
-        ilocal_interact = ii;
       } else if (itype == surface_type) {
         isurf = i;
-        iinteract = j;
-        ilocal_interact = jj;
       } else {
         error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
       }
@@ -149,102 +135,45 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       normy /= normr;
       normz /= normr;
 
-      avg_nvecs[iinteract][0] += normx;
-      avg_nvecs[iinteract][1] += normy;
-      avg_nvecs[iinteract][2] += normz;
-      nnvec_contributors[iinteract]++;
-    }
-  }
-
-  for (int ii = 0; ii < inum; ii++) {
-    i = ilist[ii];
-    if (nnvec_contributors[i] > 0) {
-      avg_nvecs[i][0] /= nnvec_contributors[i];
-      avg_nvecs[i][1] /= nnvec_contributors[i];
-      avg_nvecs[i][2] /= nnvec_contributors[i];
-    }
-  }
-
-  // all owned atoms now know their average surface normal
-  // forward comm average surface normal to ghosts of other procs
-  comm->forward_comm(this);
-
-  for (ii = 0; ii < inum; ii++) {
-    i = ilist[ii];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
-    itype = type[i];
-    jlist = firstneigh[i];
-    jnum = numneigh[i];
-    fxtmp = fytmp = fztmp = 0.0;
-
-    for (jj = 0; jj < jnum; jj++) {
-      j = jlist[jj];
-      factor_lj = special_lj[sbmask(j)];
-      j &= NEIGHMASK;
-      jtype = type[j];
-
-      // extract normal vector for surface atom
-      if (jtype == surface_type) {
-        isurf = j;
-        iinteract = i;
-        ilocal_interact = ii;
-      } else if (itype == surface_type) {
-        isurf = i;
-        iinteract = j;
-        ilocal_interact = jj;
-      } else {
-        error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
-      }
-
-      // extract average surface normal at interactor atom
-      normx = avg_nvecs[iinteract][0];
-      normy = avg_nvecs[iinteract][1];
-      normz = avg_nvecs[iinteract][2];
-
-      delx = x[iinteract][0] - x[isurf][0];
-      dely = x[iinteract][1] - x[isurf][1];
-      delz = x[iinteract][2] - x[isurf][2];
-      rsq = delx * delx + dely * dely + delz * delz;
-
-      if (rsq >= cutsq[itype][jtype] || nnvec_contributors[iinteract] == 0) continue;
-
-      double r = sqrt(rsq);
-
-      const double align = std::abs(delx * normx + dely * normy + delz * normz) / r; // [0, 1] alignment of delta with surface normal.
-      double delta = r_zero[itype][jtype] - (r * align);
-      const double prefactor = factor_lj * delta * k[itype][jtype]; // * theta_fact;
-      const double fpair = 2.0 * prefactor / (float)nnvec_contributors[iinteract]; //  / r;
-      
-      if (itype == surface_type) {
-        // fpair is negative when larger than r_zero
-        // therefore change sign here to move surface atoms inwards
-        // therefore along normal, this should point inwards
-        fxtmp -= fpair * normx;
-        fytmp -= fpair * normy;
-        fztmp -= fpair * normz;
-        if (newton_pair || j < nlocal) {
-            f[j][0] += fpair * normx;
-            f[j][1] += fpair * normy;
-            f[j][2] += fpair * normz;
+      if (rsq < cutsq[itype][jtype]) {
+        const double r = sqrt(rsq);
+        costheta_max = r_zero[itype][jtype] / cut[itype][jtype];
+        const double align = std::abs(delx * normx + dely * normy + delz * normz) / r; // [0, 1] alignment of delta with surface normal.
+        double theta_fact = (align - costheta_max) / (1.0 - costheta_max); // linear decay of force magnitude when going away from ideal alignment
+        theta_fact = theta_fact > 0 ? theta_fact : 0;
+        double delta = r_zero[itype][jtype] - r;
+        const double prefactor = factor_lj * delta * k[itype][jtype] * theta_fact;
+        const double fpair = 2.0 * prefactor; //  / r;
+        
+        if (itype == surface_type) {
+          // fpair is negative when larger than r_zero
+          // therefore change sign here to move surface atoms inwards
+          // therefore along normal, this should point inwards
+          fxtmp -= fpair * normx; // align * 
+          fytmp -= fpair * normy; // align * 
+          fztmp -= fpair * normz; // align * 
+          if (newton_pair || j < nlocal) {
+              f[j][0] += fpair * normx; // align * 
+              f[j][1] += fpair * normy; // align * 
+              f[j][2] += fpair * normz; // align * 
+          }
+        } else if (jtype == surface_type) {
+          fxtmp += fpair * normx; // align * 
+          fytmp += fpair * normy; // align * 
+          fztmp += fpair * normz; // align * 
+          if (newton_pair || j < nlocal) {
+              f[j][0] -= fpair * normx; // align * 
+              f[j][1] -= fpair * normy; // align * 
+              f[j][2] -= fpair * normz; // align * 
+          }
+        } else {
+          error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
         }
-      } else if (jtype == surface_type) {
-        fxtmp += fpair * normx;
-        fytmp += fpair * normy;
-        fztmp += fpair * normz;
-        if (newton_pair || j < nlocal) {
-            f[j][0] -= fpair * normx;
-            f[j][1] -= fpair * normy;
-            f[j][2] -= fpair * normz;
-        }
-      } else {
-        error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
-      }
 
-      if (evflag) {
-        const double philj = prefactor * delta;
-        ev_tally(i, j, nlocal, newton_pair, philj, 0.0, fpair, delx, dely, delz);
+        if (evflag) {
+          const double philj = prefactor * delta;
+          ev_tally(i, j, nlocal, newton_pair, philj, 0.0, fpair, delx, dely, delz);
+        }
       }
     }
     f[i][0] += fxtmp;
@@ -273,18 +202,6 @@ void PairHarmonicSurface::allocate()
   memory->create(cut, n, n, "pair:cut");
   memory->create(cutsq, n, n, "pair:cutsq");
   memory->create(normal_factor, n, n, "pair:normal_factor");
-
-  memory->create(nnvec_contributors, atom->nmax, "pair_harmonic_surface:nnvec_contributors");
-  memory->create(avg_nvecs, atom->nmax, 3, "pair_harmonic_surface:avg_nvecs");
-
-  // let's add the limit_tags per-atom property fix
-  // id_nvec_fix = utils::strdup("harmonic_surface_nvec");
-  // if (!modify->get_fix_by_id(id_nvec_fix)) {
-  //   nvec_fix = modify->add_fix(
-  //     std::string(id_nvec_fix) +
-  //     " all property/atom d2_avg_nvecs i_nnvec_contributors ghost yes"
-  //   );
-  // }  
 }
 
 /* ----------------------------------------------------------------------
@@ -506,32 +423,4 @@ void *PairHarmonicSurface::extract(const char *str, int &dim)
   if (strcmp(str, "cut") == 0) return (void *) cut;
   if (strcmp(str, "normal_factor") == 0) return (void *) normal_factor;
   return nullptr;
-}
-
-int PairHarmonicSurface::pack_forward_comm(int n, int *list, double *buf, 
-                                            int /*pbc_flag*/, int * /*pbc*/)
-{
-  int i, j, m = 0;
-  for (i = 0; i < n; i++) {
-    j = list[i];
-    buf[m++] = ubuf(nnvec_contributors[j]).d;
-    buf[m++] = avg_nvecs[j][0];
-    buf[m++] = avg_nvecs[j][1];
-    buf[m++] = avg_nvecs[j][2];
-  }
-  return m;
-}
-
-void PairHarmonicSurface::unpack_forward_comm(int n, int first, double *buf)
-{
-  int i, k, m, last;
-  m=0;
-  last = first+n;
-
-  for (i = first; i < last; i++) {
-    nnvec_contributors[i] = (int) ubuf(buf[m++]).i;
-    avg_nvecs[i][0] = buf[m++];
-    avg_nvecs[i][1] = buf[m++];
-    avg_nvecs[i][2] = buf[m++];
-  }
 }
