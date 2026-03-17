@@ -54,6 +54,7 @@ class PairHarmonicSurfaceAvg : public Pair {
 
   int *nnvec_contributors;
   double **avg_nvecs;
+  void calculate_mean_normal_vectors();
 
   // custom atom properties to store number of contributors and average normal vector
   int idx_nnvec_contributors;
@@ -61,7 +62,7 @@ class PairHarmonicSurfaceAvg : public Pair {
   int *nnvec_contributors_atom;
   double **avg_nvecs_atom;
   void setup_custom_atom_properties();
-  
+
   virtual void allocate();
 };
 

@@ -66,7 +66,7 @@ PairHarmonicSurfaceAvg::~PairHarmonicSurfaceAvg()
 void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
 {
   int i, j, ii, jj, inum, jnum, itype, jtype, isurf, iinteract;
-  double xtmp, ytmp, ztmp, fxtmp, fytmp, fztmp;
+  double fxtmp, fytmp, fztmp;
   double delx, dely, delz, rsq, factor_lj;
   double normx, normy, normz, normr, rotation[3][3], normal_dist, tang_dist;
   int *ilist, *jlist, *numneigh, **firstneigh;
@@ -93,125 +93,7 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
   avec = dynamic_cast<AtomVecEllipsoid *>(atom->style_match("ellipsoid"));
   if (!avec) error->all(FLERR, "Pair style harmonic/surface/avg requires atom style ellipsoid");
 
-  // zero out normal vector contributors and average normal vectors for each atom
-  for (ii = 0; ii < nlocal; ii++) {
-    nnvec_contributors[ii] = 0;
-    avg_nvecs[ii][0] = 0.0;
-    avg_nvecs[ii][1] = 0.0;
-    avg_nvecs[ii][2] = 0.0;
-  }
-
-  // fill normal vectors with averages of nearest interaction partners
-  for (ii = 0; ii < inum; ii++) {
-    i = ilist[ii];
-    itype = type[i];
-    jlist = firstneigh[i];
-    jnum = numneigh[i];
-    for (jj = 0; jj < jnum; jj++) {
-      j = jlist[jj];
-      factor_lj = special_lj[sbmask(j)];
-      j &= NEIGHMASK;
-      jtype = type[j];
-
-      // determine normal vector at surface atom
-      if (jtype == surface_type) {
-        isurf = j;
-        iinteract = i;
-      } else if (itype == surface_type) {
-        isurf = i;
-        iinteract = j;
-      } else {
-        continue; // not interacting with surface, skip quietly
-        error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.",
-                   itype, jtype, surface_type);
-      }
-
-      delx = x[i][0] - x[j][0];
-      dely = x[i][1] - x[j][1];
-      delz = x[i][2] - x[j][2];
-      rsq = delx * delx + dely * dely + delz * delz;
-      if (rsq >= cutsq[itype][jtype]) continue;
-
-      if (!atom->ellipsoid_flag) error->all(FLERR, "Atom with index %d and type %d is not an ellipsoid, cannot obtain normal for pair style harmonic/surface/avg", isurf, surface_type);
-      // taken from pair_ylz.cpp
-      // does this mean longest axis has to be x?
-      // or are the ellipsoid axis sorted by length?
-      double *iquat = avec->bonus[atom->ellipsoid[isurf]].quat;
-      MathExtra::quat_to_mat_trans(iquat, rotation);
-      // YlZ ellipsoids point outward, so make them point inward here
-      normx = normal_factor[itype][jtype] * rotation[0][0];
-      normy = normal_factor[itype][jtype] * rotation[0][1];
-      normz = normal_factor[itype][jtype] * rotation[0][2];
-
-      normr = sqrt(normx * normx + normy * normy + normz * normz);
-      normx /= normr;
-      normy /= normr;
-      normz /= normr;
-
-      avg_nvecs[iinteract][0] += normx;
-      avg_nvecs[iinteract][1] += normy;
-      avg_nvecs[iinteract][2] += normz;
-      nnvec_contributors[iinteract]++;
-    }
-  }
-
-  for (int ii = 0; ii < inum; ii++) {
-    i = ilist[ii];
-    if (nnvec_contributors[i] > 0) {
-      avg_nvecs[i][0] /= nnvec_contributors[i];
-      avg_nvecs[i][1] /= nnvec_contributors[i];
-      avg_nvecs[i][2] /= nnvec_contributors[i];
-    }
-  }
-
-  // all owned atoms now know their average surface normal
-  // forward comm average surface normal to ghosts of other procs
-  comm->forward_comm(this);
-
-  // Re-count contributors using distance projected along the averaged local surface normal.
-  // This multiplicity is used to split the force among neighbors in the force loop below.
-  for (ii = 0; ii < nlocal; ii++) nnvec_contributors[ii] = 0;
-
-  for (ii = 0; ii < inum; ii++) {
-    i = ilist[ii];
-    itype = type[i];
-    jlist = firstneigh[i];
-    jnum = numneigh[i];
-
-    for (jj = 0; jj < jnum; jj++) {
-      j = jlist[jj] & NEIGHMASK;
-      jtype = type[j];
-
-      if (jtype == surface_type) {
-        isurf = j;
-        iinteract = i;
-      } else if (itype == surface_type) {
-        isurf = i;
-        iinteract = j;
-      } else {
-        continue;
-      }
-
-      normx = avg_nvecs[iinteract][0];
-      normy = avg_nvecs[iinteract][1];
-      normz = avg_nvecs[iinteract][2];
-      normr = sqrt(normx * normx + normy * normy + normz * normz);
-      if (normr == 0.0) continue;
-
-      delx = x[iinteract][0] - x[isurf][0];
-      dely = x[iinteract][1] - x[isurf][1];
-      delz = x[iinteract][2] - x[isurf][2];
-      rsq = delx * delx + dely * dely + delz * delz;
-      if (rsq >= cutsq[itype][jtype]) continue;
-
-      normal_dist = std::abs(delx * normx + dely * normy + delz * normz) / normr;
-      tang_dist = sqrt(rsq - normal_dist * normal_dist);
-      if (tang_dist <= cut_tang[itype][jtype]) nnvec_contributors[iinteract]++;
-    }
-  }
-
-  // forward new number of neighbours again to use in force calculation
-  comm->forward_comm(this);
+  calculate_mean_normal_vectors();
 
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
@@ -219,12 +101,6 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
     jlist = firstneigh[i];
     jnum = numneigh[i];
     fxtmp = fytmp = fztmp = 0.0;
-
-    // propagate to atom variables for storage
-    nnvec_contributors_atom[ii] = nnvec_contributors[ii];
-    avg_nvecs_atom[ii][0] = avg_nvecs[ii][0];
-    avg_nvecs_atom[ii][1] = avg_nvecs[ii][1];
-    avg_nvecs_atom[ii][2] = avg_nvecs[ii][2];
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
@@ -355,6 +231,151 @@ void PairHarmonicSurfaceAvg::setup_custom_atom_properties()
 
   nnvec_contributors_atom = atom->ivector[idx_nnvec_contributors];
   avg_nvecs_atom = atom->darray[idx_avg_nvecs];
+}
+
+/* ----------------------------------------------------------------------
+   mean average vector calculation and propagator
+------------------------------------------------------------------------- */
+
+void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
+{ 
+  int i, j, ii, jj, inum, jnum, itype, jtype, isurf, iinteract;
+  double normx, normy, normz, normr, rotation[3][3], normal_dist, tang_dist;
+  double delx, dely, delz, rsq, factor_lj;
+  int *ilist, *jlist, *numneigh, **firstneigh;
+  
+  double **x = atom->x;
+  int *type = atom->type;
+
+  // zero out normal vector contributors and average normal vectors for each atom
+  for (ii = 0; ii < atom->nlocal; ii++) {
+    nnvec_contributors[ii] = 0;
+    avg_nvecs[ii][0] = 0.0;
+    avg_nvecs[ii][1] = 0.0;
+    avg_nvecs[ii][2] = 0.0;
+  }
+
+  // fill normal vectors with averages of nearest interaction partners
+  for (ii = 0; ii < inum; ii++) {
+    i = ilist[ii];
+    itype = type[i];
+    jlist = firstneigh[i];
+    jnum = numneigh[i];
+    for (jj = 0; jj < jnum; jj++) {
+      j = jlist[jj];
+      factor_lj = special_lj[sbmask(j)];
+      j &= NEIGHMASK;
+      jtype = type[j];
+
+      // determine normal vector at surface atom
+      if (jtype == surface_type) {
+        isurf = j;
+        iinteract = i;
+      } else if (itype == surface_type) {
+        isurf = i;
+        iinteract = j;
+      } else {
+        continue; // not interacting with surface, skip quietly
+        error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.",
+                   itype, jtype, surface_type);
+      }
+
+      delx = x[i][0] - x[j][0];
+      dely = x[i][1] - x[j][1];
+      delz = x[i][2] - x[j][2];
+      rsq = delx * delx + dely * dely + delz * delz;
+      if (rsq >= cutsq[itype][jtype]) continue;
+
+      if (!atom->ellipsoid_flag) error->all(FLERR, "Atom with index %d and type %d is not an ellipsoid, cannot obtain normal for pair style harmonic/surface/avg", isurf, surface_type);
+      // taken from pair_ylz.cpp
+      // does this mean longest axis has to be x?
+      // or are the ellipsoid axis sorted by length?
+      double *iquat = avec->bonus[atom->ellipsoid[isurf]].quat;
+      MathExtra::quat_to_mat_trans(iquat, rotation);
+      // YlZ ellipsoids point outward, so make them point inward here
+      normx = normal_factor[itype][jtype] * rotation[0][0];
+      normy = normal_factor[itype][jtype] * rotation[0][1];
+      normz = normal_factor[itype][jtype] * rotation[0][2];
+
+      normr = sqrt(normx * normx + normy * normy + normz * normz);
+      normx /= normr;
+      normy /= normr;
+      normz /= normr;
+
+      avg_nvecs[iinteract][0] += normx;
+      avg_nvecs[iinteract][1] += normy;
+      avg_nvecs[iinteract][2] += normz;
+      nnvec_contributors[iinteract]++;
+    }
+  }
+
+  for (int ii = 0; ii < inum; ii++) {
+    i = ilist[ii];
+    if (nnvec_contributors[i] > 0) {
+      avg_nvecs[i][0] /= nnvec_contributors[i];
+      avg_nvecs[i][1] /= nnvec_contributors[i];
+      avg_nvecs[i][2] /= nnvec_contributors[i];
+    }
+  }
+
+  // all owned atoms now know their average surface normal
+  // forward comm average surface normal to ghosts of other procs
+  comm->forward_comm(this);
+
+  // Re-count contributors using distance projected along the averaged local surface normal.
+  // This multiplicity is used to split the force among neighbors in the force loop below.
+  for (ii = 0; ii < atom->nlocal; ii++) nnvec_contributors[ii] = 0;
+
+  for (ii = 0; ii < inum; ii++) {
+    i = ilist[ii];
+    itype = type[i];
+    jlist = firstneigh[i];
+    jnum = numneigh[i];
+
+    for (jj = 0; jj < jnum; jj++) {
+      j = jlist[jj] & NEIGHMASK;
+      jtype = type[j];
+
+
+      if (jtype == surface_type) {
+        isurf = j;
+        iinteract = i;
+      } else if (itype == surface_type) {
+        isurf = i;
+        iinteract = j;
+      } else {
+        continue;
+      }
+
+      normx = avg_nvecs[iinteract][0];
+      normy = avg_nvecs[iinteract][1];
+      normz = avg_nvecs[iinteract][2];
+      normr = sqrt(normx * normx + normy * normy + normz * normz);
+      if (normr == 0.0) continue;
+
+      delx = x[iinteract][0] - x[isurf][0];
+      dely = x[iinteract][1] - x[isurf][1];
+      delz = x[iinteract][2] - x[isurf][2];
+      rsq = delx * delx + dely * dely + delz * delz;
+      if (rsq >= cutsq[itype][jtype]) continue;
+
+      normal_dist = std::abs(delx * normx + dely * normy + delz * normz) / normr;
+      tang_dist = sqrt(rsq - normal_dist * normal_dist);
+      if (tang_dist <= cut_tang[itype][jtype]) nnvec_contributors[iinteract]++;
+    }
+  }
+
+  // forward new number of neighbours again to use in force calculation
+  comm->forward_comm(this);
+
+  // fill atom properties for output
+  for (ii = 0; ii < inum; ii++) {
+    i = ilist[ii];
+    avg_nvecs_atom[i][0] = avg_nvecs[i][0];
+    avg_nvecs_atom[i][1] = avg_nvecs[i][1];
+    avg_nvecs_atom[i][2] = avg_nvecs[i][2];
+    nnvec_contributors_atom[i] = nnvec_contributors[i];
+  }
 }
 
 
