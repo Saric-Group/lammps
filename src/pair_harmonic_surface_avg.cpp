@@ -83,7 +83,6 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
   double *special_lj = force->special_lj;
   int newton_pair = force->newton_pair;
 
-  setup_custom_atom_properties();
 
   inum = list->inum;
   ilist = list->ilist;
@@ -204,6 +203,9 @@ void PairHarmonicSurfaceAvg::allocate()
 
   memory->create(nnvec_contributors, atom->nmax, "pair_harmonic_surface_avg:nnvec_contributors");
   memory->create(avg_nvecs, atom->nmax, 3, "pair_harmonic_surface_avg:avg_nvecs");
+
+  // register number of contributors and mean-field normal vector for debugging
+  setup_custom_atom_properties();
 }
 
 /* ----------------------------------------------------------------------
@@ -233,6 +235,21 @@ void PairHarmonicSurfaceAvg::setup_custom_atom_properties()
   avg_nvecs_atom = atom->darray[idx_avg_nvecs];
 }
 
+void PairHarmonicSurfaceAvg::find_atom_properties()
+{
+  int flag = -1;
+  int cols = -1;
+  idx_nnvec_contributors = atom->find_custom("nnvec_contributors", flag, cols);
+  idx_avg_nvecs = atom->find_custom("avg_nvecs", flag, cols);
+
+  if (idx_nnvec_contributors < 0 || idx_avg_nvecs < 0) {
+    error->all(FLERR, "Custom atom properties nnvec_contributors and avg_nvecs must be allocated before pair style harmonic/surface/avg can be allocated");
+  }
+
+  nnvec_contributors_atom = atom->ivector[idx_nnvec_contributors];
+  avg_nvecs_atom = atom->darray[idx_avg_nvecs];
+}
+
 /* ----------------------------------------------------------------------
    mean average vector calculation and propagator
 ------------------------------------------------------------------------- */
@@ -246,6 +263,14 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
   
   double **x = atom->x;
   int *type = atom->type;
+  inum = list->inum;
+  ilist = list->ilist;
+  numneigh = list->numneigh;
+  firstneigh = list->firstneigh;
+
+  // reset pointers to atom properties in case they were reallocated
+  // that being nnvec_contributors_atom and avg_nvecs_atom
+  find_atom_properties();
 
   // zero out normal vector contributors and average normal vectors for each atom
   for (ii = 0; ii < atom->nlocal; ii++) {
@@ -369,7 +394,7 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
   comm->forward_comm(this);
 
   // fill atom properties for output
-  for (ii = 0; ii < inum; ii++) {
+  for (ii = 0; ii < atom->nlocal; ii++) {
     i = ilist[ii];
     avg_nvecs_atom[i][0] = avg_nvecs[i][0];
     avg_nvecs_atom[i][1] = avg_nvecs[i][1];
@@ -410,7 +435,7 @@ void PairHarmonicSurfaceAvg::coeff(int narg, char **arg)
   double cut_tang_one = cut_one;
   int normal_factor_one = -1;
   if (narg == 6) {
-    cut_tang_one = utils::inumeric(FLERR, arg[5], false, lmp);
+    cut_tang_one = utils::numeric(FLERR, arg[5], false, lmp);
   } else if (narg == 7) {
     cut_tang_one = utils::numeric(FLERR, arg[5], false, lmp);
     normal_factor_one = utils::inumeric(FLERR, arg[6], false, lmp);

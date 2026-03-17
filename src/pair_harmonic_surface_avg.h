@@ -62,6 +62,7 @@ class PairHarmonicSurfaceAvg : public Pair {
   int *nnvec_contributors_atom;
   double **avg_nvecs_atom;
   void setup_custom_atom_properties();
+  void find_atom_properties();
 
   virtual void allocate();
 };
