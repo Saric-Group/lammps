@@ -46,7 +46,7 @@ class PairHarmonicSurfaceAvg : public Pair {
   void unpack_forward_comm(int, int, double *) override;
 
  protected:
-  double **k, **r_zero, **cut;
+  double **k, **r_zero, **cut, **cut_tang;
   int **normal_factor;
   int surface_type; // atom-type of particles to obtain normal from, must be ellipsoids
 
@@ -54,6 +54,14 @@ class PairHarmonicSurfaceAvg : public Pair {
 
   int *nnvec_contributors;
   double **avg_nvecs;
+  void calculate_mean_normal_vectors();
+
+  // custom atom properties to store number of contributors and average normal vector
+  int idx_nnvec_contributors;
+  int idx_avg_nvecs;
+  int *nnvec_contributors_atom;
+  double **avg_nvecs_atom;
+  void setup_custom_atom_properties();
 
   virtual void allocate();
 };
