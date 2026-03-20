@@ -24,6 +24,8 @@ PairStyle(harmonic/surface/avg,PairHarmonicSurfaceAvg);
 
 namespace LAMMPS_NS {
 
+enum { CLASSVARS, ATOMVECS };    // forward comm
+
 class PairHarmonicSurfaceAvg : public Pair {
  public:
   PairHarmonicSurfaceAvg(class LAMMPS *);
@@ -65,6 +67,7 @@ class PairHarmonicSurfaceAvg : public Pair {
   void find_atom_properties();
 
   virtual void allocate();
+  int cfstyle;
 };
 
 }    // namespace LAMMPS_NS
