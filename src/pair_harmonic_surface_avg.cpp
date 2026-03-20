@@ -42,6 +42,7 @@ PairHarmonicSurfaceAvg::PairHarmonicSurfaceAvg(LAMMPS *lmp) : Pair(lmp), k(nullp
   born_matrix_enable = 1;
   writedata = 1;
   comm_forward = 4;
+  cfstyle = CLASSVARS;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -345,6 +346,7 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
 
   // all owned atoms now know their average surface normal
   // forward comm average surface normal to ghosts of other procs
+  cfstyle = CLASSVARS; // switch to communicating class variables for forward comm, we need the average normal vector and number of contributors for each atom in the force calculation
   comm->forward_comm(this);
 
   // Re-count contributors using distance projected along the averaged local surface normal.
@@ -391,6 +393,7 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
   }
 
   // forward new number of neighbours again to use in force calculation
+  cfstyle = CLASSVARS; // switch to communicating class variables for forward comm, we need the average normal vector and number of contributors for each atom in the force calculation
   comm->forward_comm(this);
 
   // fill atom properties for output
@@ -401,6 +404,9 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
     avg_nvecs_atom[i][2] = avg_nvecs[i][2];
     nnvec_contributors_atom[i] = nnvec_contributors[i];
   }
+
+  cfstyle = ATOMVECS; // switch to communicating atomvecs for output, we need the average normal vector and number of contributors for each atom in the output
+  comm->forward_comm(this);
 }
 
 
@@ -649,13 +655,25 @@ int PairHarmonicSurfaceAvg::pack_forward_comm(int n, int *list, double *buf, int
                                               int * /*pbc*/)
 {
   int i, j, m = 0;
-  for (i = 0; i < n; i++) {
-    j = list[i];
-    buf[m++] = ubuf(nnvec_contributors[j]).d;
-    buf[m++] = avg_nvecs[j][0];
-    buf[m++] = avg_nvecs[j][1];
-    buf[m++] = avg_nvecs[j][2];
+
+  if (cfstyle == 0) {
+    for (i = 0; i < n; i++) {
+        j = list[i];
+        buf[m++] = ubuf(nnvec_contributors[j]).d;
+        buf[m++] = avg_nvecs[j][0];
+        buf[m++] = avg_nvecs[j][1];
+        buf[m++] = avg_nvecs[j][2];
+    }
+  } else if (cfstyle == 1) {
+    for (i = 0; i < n; i++) {
+        j = list[i];
+        buf[m++] = ubuf(nnvec_contributors_atom[j]).d;
+        buf[m++] = avg_nvecs_atom[j][0];
+        buf[m++] = avg_nvecs_atom[j][1];
+        buf[m++] = avg_nvecs_atom[j][2];
+    }
   }
+  
   return m;
 }
 
@@ -665,10 +683,19 @@ void PairHarmonicSurfaceAvg::unpack_forward_comm(int n, int first, double *buf)
   m = 0;
   last = first + n;
 
-  for (i = first; i < last; i++) {
-    nnvec_contributors[i] = (int) ubuf(buf[m++]).i;
-    avg_nvecs[i][0] = buf[m++];
-    avg_nvecs[i][1] = buf[m++];
-    avg_nvecs[i][2] = buf[m++];
+  if (cfstyle == 0) {
+    for (i = first; i < last; i++) {
+      nnvec_contributors[i] = (int) ubuf(buf[m++]).i;
+      avg_nvecs[i][0] = buf[m++];
+      avg_nvecs[i][1] = buf[m++];
+      avg_nvecs[i][2] = buf[m++];
+    }
+  } else if (cfstyle == 1) {
+    for (i = first; i < last; i++) {
+      nnvec_contributors_atom[i] = (int) ubuf(buf[m++]).i;
+      avg_nvecs_atom[i][0] = buf[m++];
+      avg_nvecs_atom[i][1] = buf[m++];
+      avg_nvecs_atom[i][2] = buf[m++];
+    }
   }
 }
