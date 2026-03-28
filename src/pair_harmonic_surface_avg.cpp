@@ -665,6 +665,9 @@ int PairHarmonicSurfaceAvg::pack_forward_comm(int n, int *list, double *buf, int
         buf[m++] = avg_nvecs[j][2];
     }
   } else if (cfstyle == 1) {
+    // Refresh atom property pointers in case atom list was reallocated
+    find_atom_properties();
+    
     for (i = 0; i < n; i++) {
         j = list[i];
         buf[m++] = ubuf(nnvec_contributors_atom[j]).d;
@@ -683,14 +686,17 @@ void PairHarmonicSurfaceAvg::unpack_forward_comm(int n, int first, double *buf)
   m = 0;
   last = first + n;
 
-  if (cfstyle == 0) {
+  if (cfstyle == CLASSVARS) {
     for (i = first; i < last; i++) {
       nnvec_contributors[i] = (int) ubuf(buf[m++]).i;
       avg_nvecs[i][0] = buf[m++];
       avg_nvecs[i][1] = buf[m++];
       avg_nvecs[i][2] = buf[m++];
     }
-  } else if (cfstyle == 1) {
+  } else if (cfstyle == ATOMVECS) {
+    // Refresh atom property pointers in case atom list was reallocated
+    find_atom_properties();
+
     for (i = first; i < last; i++) {
       nnvec_contributors_atom[i] = (int) ubuf(buf[m++]).i;
       avg_nvecs_atom[i][0] = buf[m++];
