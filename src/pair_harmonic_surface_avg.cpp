@@ -76,6 +76,9 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
 
   ev_init(eflag, vflag);
 
+  // grow local vectors and arrays if necessary
+  if (atom->nmax > nmax) grow_local();
+
   double **x = atom->x;
   double **f = atom->f;
   int *type = atom->type;
@@ -83,7 +86,6 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
   int ntotal = atom->nlocal + atom->nghost;
   double *special_lj = force->special_lj;
   int newton_pair = force->newton_pair;
-
 
   inum = list->inum;
   ilist = list->ilist;
@@ -202,6 +204,7 @@ void PairHarmonicSurfaceAvg::allocate()
   memory->create(cutsq, n, n, "pair:cutsq");
   memory->create(normal_factor, n, n, "pair:normal_factor");
 
+  nmax = atom->nmax;
   memory->create(nnvec_contributors, atom->nmax, "pair_harmonic_surface_avg:nnvec_contributors");
   memory->create(avg_nvecs, atom->nmax, 3, "pair_harmonic_surface_avg:avg_nvecs");
 
@@ -649,6 +652,26 @@ void *PairHarmonicSurfaceAvg::extract(const char *str, int &dim)
   if (strcmp(str, "cut_tang") == 0) return (void *) cut_tang;
   if (strcmp(str, "normal_factor") == 0) return (void *) normal_factor;
   return nullptr;
+}
+
+/* ----------------------------------------------------------------------
+  grow local vectors and arrays if necessary
+  keep them all atom->nmax in length even if ghost storage not needed
+------------------------------------------------------------------------- */
+
+void PairHarmonicSurfaceAvg::grow_local()
+{
+  if (allocated) {
+    memory->destroy(nnvec_contributors);
+    memory->destroy(avg_nvecs);
+  }
+
+  int nmax = atom->nmax;
+  memory->grow(nnvec_contributors, nmax, "pair_harmonic_surface_avg:nnvec_contributors");
+  memory->grow(avg_nvecs, nmax, 3, "pair_harmonic_surface_avg:avg_nvecs");
+
+  // update pointers in case they were reallocated
+  find_atom_properties();
 }
 
 int PairHarmonicSurfaceAvg::pack_forward_comm(int n, int *list, double *buf, int /*pbc_flag*/,

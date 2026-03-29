@@ -54,6 +54,7 @@ class PairHarmonicSurfaceAvg : public Pair {
 
   class AtomVecEllipsoid *avec; // to access orientation of ellipsoids
 
+  int nmax; // current size of nnvec_contributors and avg_nvecs arrays
   int *nnvec_contributors;
   double **avg_nvecs;
   void calculate_mean_normal_vectors();
@@ -67,6 +68,7 @@ class PairHarmonicSurfaceAvg : public Pair {
   void find_atom_properties();
 
   virtual void allocate();
+  virtual void grow_local();
   int cfstyle;
 };
 
