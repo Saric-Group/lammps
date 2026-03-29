@@ -52,7 +52,7 @@ enum{DIAMETER, CHARGE};
 
 FixAdapt::FixAdapt(LAMMPS *lmp, int narg, char **arg) :
   Fix(lmp, narg, arg), nadapt(0), anypair(0), anybond(0), anyangle(0),
-  anydihedral(0), anyimproper(0), id_fix_diam(nullptr), id_fix_chg(nullptr), adapt(nullptr)
+  anydihedral(0), anyimproper(0), id_fix_diam(nullptr), id_fix_chg(nullptr), adapt(nullptr), fix_diam(nullptr), fix_chg(nullptr)
 {
   if (narg < 5) utils::missing_cmd_args(FLERR,"fix adapt", error);
   nevery = utils::inumeric(FLERR,arg[3],false,lmp);
