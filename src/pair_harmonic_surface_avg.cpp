@@ -21,10 +21,12 @@
 #include "atom_vec_ellipsoid.h"
 #include "comm.h"
 #include "error.h"
+#include "fix_property_atom.h"
 #include "force.h"
 #include "math_const.h"
 #include "math_extra.h"
 #include "memory.h"
+#include "modify.h"
 #include "neigh_list.h"
 
 #include <cmath>
@@ -35,14 +37,15 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-PairHarmonicSurfaceAvg::PairHarmonicSurfaceAvg(LAMMPS *lmp) : Pair(lmp), k(nullptr), r_zero(nullptr), cut(nullptr), cut_tang(nullptr),
+PairHarmonicSurfaceAvg::PairHarmonicSurfaceAvg(LAMMPS *lmp) : Pair(lmp), k(nullptr), r_zero(nullptr), cut(nullptr), cut_tang(nullptr),\
+                                                             id_fix_store_nnvecs(nullptr), fix_store_nnvecs(nullptr),
                                                              idx_nnvec_contributors(-1), idx_avg_nvecs(-1),
                                                              nnvec_contributors_atom(nullptr), avg_nvecs_atom(nullptr)
 {
   born_matrix_enable = 1;
   writedata = 1;
   comm_forward = 4;
-  cfstyle = CLASSVARS;
+  cfstyle = ATOMVECS;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -57,8 +60,11 @@ PairHarmonicSurfaceAvg::~PairHarmonicSurfaceAvg()
     memory->destroy(cut_tang);
     memory->destroy(cutsq);
     memory->destroy(normal_factor);
-    memory->destroy(nnvec_contributors);
-    memory->destroy(avg_nvecs);
+
+    if (id_fix_store_nnvecs && modify->get_fix_by_id(id_fix_store_nnvecs)) {
+      modify->delete_fix(id_fix_store_nnvecs);
+      delete[] id_fix_store_nnvecs;
+    }
   }
 }
 
@@ -77,7 +83,12 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
   ev_init(eflag, vflag);
 
   // grow local vectors and arrays if necessary
-  if (atom->nmax > nmax) grow_local();
+  // removed since all handled via fix store/atom now
+  // if (atom->nmax > nmax) grow_local();
+
+  // reset pointers to atom properties in case they were reallocated
+  // that being nnvec_contributors_atom and avg_nvecs_atom
+  find_atom_properties();
 
   double **x = atom->x;
   double **f = atom->f;
@@ -123,9 +134,9 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
       }
 
       // extract average surface normal at interactor atom
-      normx = avg_nvecs[iinteract][0];
-      normy = avg_nvecs[iinteract][1];
-      normz = avg_nvecs[iinteract][2];
+      normx = avg_nvecs_atom[iinteract][0];
+      normy = avg_nvecs_atom[iinteract][1];
+      normz = avg_nvecs_atom[iinteract][2];
 
       delx = x[iinteract][0] - x[isurf][0];
       dely = x[iinteract][1] - x[isurf][1];
@@ -133,7 +144,7 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
       rsq = delx * delx + dely * dely + delz * delz;
 
       normr = sqrt(normx * normx + normy * normy + normz * normz);
-      if (normr == 0.0 || nnvec_contributors[iinteract] == 0) continue;
+      if (normr == 0.0 || nnvec_contributors_atom[iinteract] == 0) continue;
       normal_dist = std::abs(delx * normx + dely * normy + delz * normz) / normr;
       tang_dist = sqrt(rsq - normal_dist * normal_dist);
       if (rsq >= cutsq[itype][jtype] || tang_dist > cut_tang[itype][jtype]) continue;
@@ -143,7 +154,7 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
       const double align = std::abs(delx * normx + dely * normy + delz * normz) / r;    // [0, 1] alignment of delta with surface normal.
       double delta = r_zero[itype][jtype] - (r * align);
       const double prefactor = factor_lj * delta * k[itype][jtype]; // * theta_fact;
-      const double fpair = 2.0 * prefactor / (float) nnvec_contributors[iinteract]; //  / r;
+      const double fpair = 2.0 * prefactor / (float) nnvec_contributors_atom[iinteract]; //  / r;
 
       if (itype == surface_type) {
         // fpair is negative when larger than r_zero
@@ -204,9 +215,9 @@ void PairHarmonicSurfaceAvg::allocate()
   memory->create(cutsq, n, n, "pair:cutsq");
   memory->create(normal_factor, n, n, "pair:normal_factor");
 
-  nmax = atom->nmax;
-  memory->create(nnvec_contributors, atom->nmax, "pair_harmonic_surface_avg:nnvec_contributors");
-  memory->create(avg_nvecs, atom->nmax, 3, "pair_harmonic_surface_avg:avg_nvecs");
+  // nmax = atom->nmax;
+  // memory->create(nnvec_contributors, atom->nmax, "pair_harmonic_surface_avg:nnvec_contributors");
+  // memory->create(avg_nvecs, atom->nmax, 3, "pair_harmonic_surface_avg:avg_nvecs");
 
   // register number of contributors and mean-field normal vector for debugging
   setup_custom_atom_properties();
@@ -218,20 +229,37 @@ void PairHarmonicSurfaceAvg::allocate()
 
 void PairHarmonicSurfaceAvg::setup_custom_atom_properties()
 {
+  id_fix_store_nnvecs = "harmonic_surface_avg_props_internal";
+
+  // Keep per-atom state in an internal fix so values persist and migrate
+  Fix* myfix = nullptr;
+  if (!modify->get_fix_by_id(id_fix_store_nnvecs)) {
+    myfix = modify->add_fix(std::string(id_fix_store_nnvecs) +
+                    " all property/atom i_nnvec_contributors d2_avg_nvecs 3 ghost yes");
+  }
+  myfix = modify->get_fix_by_id(id_fix_store_nnvecs);
+  if (!myfix) {
+    error->all(FLERR, "Failed to create fix to store custom atom properties for pair style harmonic/surface/avg");
+  }
+  // this is not strictly necessary, but could allow for easier access to fix if needed
+  fix_store_nnvecs = dynamic_cast<FixPropertyAtom *>(myfix);
+
   int flag = -1;
   int cols = -1;
 
   idx_nnvec_contributors = atom->find_custom("nnvec_contributors", flag, cols);
   if (idx_nnvec_contributors < 0) {
-    idx_nnvec_contributors = atom->add_custom("nnvec_contributors", 0, 0, 1);
-  } else if (flag != 0 || cols != 0) {
+    error->all(FLERR, "Failed to create custom atom property nnvec_contributors via internal fix property/atom");
+  }
+  if (flag != 0 || cols != 0) {
     error->all(FLERR, "Custom atom property nnvec_contributors must be an integer scalar (i_nnvec_contributors)");
   }
 
   idx_avg_nvecs = atom->find_custom("avg_nvecs", flag, cols);
   if (idx_avg_nvecs < 0) {
-    idx_avg_nvecs = atom->add_custom("avg_nvecs", 1, 3, 1);
-  } else if (flag != 1 || cols != 3) {
+    error->all(FLERR, "Failed to create custom atom property avg_nvecs via internal fix property/atom");
+  }
+  if (flag != 1 || cols != 3) {
     error->all(FLERR, "Custom atom property avg_nvecs must be a 3-column double array (d2_avg_nvecs)");
   }
 
@@ -272,16 +300,12 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
 
-  // reset pointers to atom properties in case they were reallocated
-  // that being nnvec_contributors_atom and avg_nvecs_atom
-  find_atom_properties();
-
   // zero out normal vector contributors and average normal vectors for each atom
   for (ii = 0; ii < atom->nlocal; ii++) {
-    nnvec_contributors[ii] = 0;
-    avg_nvecs[ii][0] = 0.0;
-    avg_nvecs[ii][1] = 0.0;
-    avg_nvecs[ii][2] = 0.0;
+    nnvec_contributors_atom[ii] = 0;
+    avg_nvecs_atom[ii][0] = 0.0;
+    avg_nvecs_atom[ii][1] = 0.0;
+    avg_nvecs_atom[ii][2] = 0.0;
   }
 
   // fill normal vectors with averages of nearest interaction partners
@@ -331,30 +355,30 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
       normy /= normr;
       normz /= normr;
 
-      avg_nvecs[iinteract][0] += normx;
-      avg_nvecs[iinteract][1] += normy;
-      avg_nvecs[iinteract][2] += normz;
-      nnvec_contributors[iinteract]++;
+      avg_nvecs_atom[iinteract][0] += normx;
+      avg_nvecs_atom[iinteract][1] += normy;
+      avg_nvecs_atom[iinteract][2] += normz;
+      nnvec_contributors_atom[iinteract]++;
     }
   }
 
   for (int ii = 0; ii < inum; ii++) {
     i = ilist[ii];
-    if (nnvec_contributors[i] > 0) {
-      avg_nvecs[i][0] /= nnvec_contributors[i];
-      avg_nvecs[i][1] /= nnvec_contributors[i];
-      avg_nvecs[i][2] /= nnvec_contributors[i];
+    if (nnvec_contributors_atom[i] > 0) {
+      avg_nvecs_atom[i][0] /= nnvec_contributors_atom[i];
+      avg_nvecs_atom[i][1] /= nnvec_contributors_atom[i];
+      avg_nvecs_atom[i][2] /= nnvec_contributors_atom[i];
     }
   }
 
   // all owned atoms now know their average surface normal
   // forward comm average surface normal to ghosts of other procs
-  cfstyle = CLASSVARS; // switch to communicating class variables for forward comm, we need the average normal vector and number of contributors for each atom in the force calculation
+  cfstyle = ATOMVECS; // switch to communicating class variables for forward comm, we need the average normal vector and number of contributors for each atom in the force calculation
   comm->forward_comm(this);
 
   // Re-count contributors using distance projected along the averaged local surface normal.
   // This multiplicity is used to split the force among neighbors in the force loop below.
-  for (ii = 0; ii < atom->nlocal; ii++) nnvec_contributors[ii] = 0;
+  for (ii = 0; ii < atom->nlocal; ii++) nnvec_contributors_atom[ii] = 0;
 
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
@@ -377,9 +401,9 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
         continue;
       }
 
-      normx = avg_nvecs[iinteract][0];
-      normy = avg_nvecs[iinteract][1];
-      normz = avg_nvecs[iinteract][2];
+      normx = avg_nvecs_atom[iinteract][0];
+      normy = avg_nvecs_atom[iinteract][1];
+      normz = avg_nvecs_atom[iinteract][2];
       normr = sqrt(normx * normx + normy * normy + normz * normz);
       if (normr == 0.0) continue;
 
@@ -391,24 +415,12 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
 
       normal_dist = std::abs(delx * normx + dely * normy + delz * normz) / normr;
       tang_dist = sqrt(rsq - normal_dist * normal_dist);
-      if (tang_dist <= cut_tang[itype][jtype]) nnvec_contributors[iinteract]++;
+      if (tang_dist <= cut_tang[itype][jtype]) nnvec_contributors_atom[iinteract]++;
     }
   }
 
   // forward new number of neighbours again to use in force calculation
-  cfstyle = CLASSVARS; // switch to communicating class variables for forward comm, we need the average normal vector and number of contributors for each atom in the force calculation
-  comm->forward_comm(this);
-
-  // fill atom properties for output
-  for (ii = 0; ii < atom->nlocal; ii++) {
-    i = ilist[ii];
-    avg_nvecs_atom[i][0] = avg_nvecs[i][0];
-    avg_nvecs_atom[i][1] = avg_nvecs[i][1];
-    avg_nvecs_atom[i][2] = avg_nvecs[i][2];
-    nnvec_contributors_atom[i] = nnvec_contributors[i];
-  }
-
-  cfstyle = ATOMVECS; // switch to communicating atomvecs for output, we need the average normal vector and number of contributors for each atom in the output
+  cfstyle = ATOMVECS; // switch to communicating class variables for forward comm, we need the average normal vector and number of contributors for each atom in the force calculation
   comm->forward_comm(this);
 }
 
@@ -657,8 +669,9 @@ void *PairHarmonicSurfaceAvg::extract(const char *str, int &dim)
 /* ----------------------------------------------------------------------
   grow local vectors and arrays if necessary
   keep them all atom->nmax in length even if ghost storage not needed
+  removed since all handled via fix store/atom now, see setup_custom_atom_properties and find_atom_properties
 ------------------------------------------------------------------------- */
-
+/*
 void PairHarmonicSurfaceAvg::grow_local()
 {
   if (allocated) {
@@ -672,22 +685,15 @@ void PairHarmonicSurfaceAvg::grow_local()
 
   // update pointers in case they were reallocated
   find_atom_properties();
-}
+}  
+*/
 
 int PairHarmonicSurfaceAvg::pack_forward_comm(int n, int *list, double *buf, int /*pbc_flag*/,
                                               int * /*pbc*/)
 {
   int i, j, m = 0;
 
-  if (cfstyle == 0) {
-    for (i = 0; i < n; i++) {
-        j = list[i];
-        buf[m++] = ubuf(nnvec_contributors[j]).d;
-        buf[m++] = avg_nvecs[j][0];
-        buf[m++] = avg_nvecs[j][1];
-        buf[m++] = avg_nvecs[j][2];
-    }
-  } else if (cfstyle == 1) {
+  if (cfstyle == ATOMVECS) {
     // Refresh atom property pointers in case atom list was reallocated
     find_atom_properties();
     
@@ -709,14 +715,7 @@ void PairHarmonicSurfaceAvg::unpack_forward_comm(int n, int first, double *buf)
   m = 0;
   last = first + n;
 
-  if (cfstyle == CLASSVARS) {
-    for (i = first; i < last; i++) {
-      nnvec_contributors[i] = (int) ubuf(buf[m++]).i;
-      avg_nvecs[i][0] = buf[m++];
-      avg_nvecs[i][1] = buf[m++];
-      avg_nvecs[i][2] = buf[m++];
-    }
-  } else if (cfstyle == ATOMVECS) {
+  if (cfstyle == ATOMVECS) {
     // Refresh atom property pointers in case atom list was reallocated
     find_atom_properties();
 
