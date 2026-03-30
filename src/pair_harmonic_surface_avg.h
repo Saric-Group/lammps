@@ -24,7 +24,7 @@ PairStyle(harmonic/surface/avg,PairHarmonicSurfaceAvg);
 
 namespace LAMMPS_NS {
 
-enum { CLASSVARS, ATOMVECS };    // forward comm
+enum { ATOMVECS };    // forward comm, currently only AtomVecs which are part of fix anyways
 
 class PairHarmonicSurfaceAvg : public Pair {
  public:
@@ -54,12 +54,11 @@ class PairHarmonicSurfaceAvg : public Pair {
 
   class AtomVecEllipsoid *avec; // to access orientation of ellipsoids
 
-  int nmax; // current size of nnvec_contributors and avg_nvecs arrays
-  int *nnvec_contributors;
-  double **avg_nvecs;
   void calculate_mean_normal_vectors();
 
   // custom atom properties to store number of contributors and average normal vector
+  char *id_fix_store_nnvecs;
+  class FixPropertyAtom *fix_store_nnvecs;
   int idx_nnvec_contributors;
   int idx_avg_nvecs;
   int *nnvec_contributors_atom;
