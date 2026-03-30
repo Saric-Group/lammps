@@ -67,7 +67,7 @@ class PairHarmonicSurfaceAvg : public Pair {
   void find_atom_properties();
 
   virtual void allocate();
-  virtual void grow_local();
+  // virtual void grow_local();
   int cfstyle;
 };
 
