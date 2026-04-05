@@ -60,11 +60,12 @@ PairHarmonicSurfaceAvg::~PairHarmonicSurfaceAvg()
     memory->destroy(cut_tang);
     memory->destroy(cutsq);
     memory->destroy(normal_factor);
+  }
 
-    if (id_fix_store_nnvecs && modify->get_fix_by_id(id_fix_store_nnvecs)) {
-      modify->delete_fix(id_fix_store_nnvecs);
-      delete[] id_fix_store_nnvecs;
-    }
+  if (id_fix_store_nnvecs && modify->nfix) 
+  {
+    modify->delete_fix(id_fix_store_nnvecs);
+    delete[] id_fix_store_nnvecs;
   }
 }
 
@@ -229,7 +230,7 @@ void PairHarmonicSurfaceAvg::allocate()
 
 void PairHarmonicSurfaceAvg::setup_custom_atom_properties()
 {
-  id_fix_store_nnvecs = "harmonic_surface_avg_props_internal";
+  id_fix_store_nnvecs = utils::strdup("harmonic_surface_avg_props_internal");
 
   // Keep per-atom state in an internal fix so values persist and migrate
   Fix* myfix = nullptr;
