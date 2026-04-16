@@ -3,7 +3,7 @@
 ------------------------------------------------------------------------- */
 
 #ifdef PAIR_CLASS
-PairStyle(nematic/angle/soft, PairNematicSoft);
+PairStyle(nematic / angle / soft, PairNematicSoft);
 #else
 
 #ifndef LMP_PAIR_NEMATIC_SOFT_H
@@ -34,15 +34,16 @@ class PairNematicSoft : public Pair {
   int intermol_flag;
 
   double **Aamp;
+  double **Amin;
   double **kappa;
   double **theta0;
-  double **c0, **s0; // cached trig
+  double **c0, **s0;    // cached trig
   double **cut;
 
   virtual void allocate();
 };
 
-} // namespace LAMMPS_NS
+}    // namespace LAMMPS_NS
 
 #endif
 #endif

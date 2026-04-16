@@ -33,6 +33,7 @@ PairNematicSoft::~PairNematicSoft()
   if (allocated) {
     memory->destroy(setflag);
     memory->destroy(Aamp);
+    memory->destroy(Amin);
     memory->destroy(kappa);
     memory->destroy(theta0);
     memory->destroy(c0);
@@ -50,6 +51,7 @@ void PairNematicSoft::allocate()
 
   memory->create(setflag, n + 1, n + 1, "pair:setflag");
   memory->create(Aamp, n + 1, n + 1, "pair:Aamp");
+  memory->create(Amin, n + 1, n + 1, "pair:Amin");
   memory->create(kappa, n + 1, n + 1, "pair:kappa");
   memory->create(theta0, n + 1, n + 1, "pair:theta0");
   memory->create(c0, n + 1, n + 1, "pair:c0");
@@ -58,9 +60,7 @@ void PairNematicSoft::allocate()
   memory->create(cutsq, n + 1, n + 1, "pair:cutsq");
 
   for (int i = 1; i <= n; i++)
-    for (int j = i; j <= n; j++) {
-      setflag[i][j] = 0;
-    }
+    for (int j = i; j <= n; j++) { setflag[i][j] = 0; }
 }
 
 void PairNematicSoft::settings(int narg, char **arg)
@@ -69,22 +69,23 @@ void PairNematicSoft::settings(int narg, char **arg)
   if (narg < 1) error->all(FLERR, "Incorrect args for pair_style nematic/angle/soft");
 
   cut_global = utils::numeric(FLERR, arg[0], false, lmp);
-  
-  intermol_flag = 0; // Reset default
-  
+
+  intermol_flag = 0;    // Reset default
+
   if (narg > 1) {
-      if (strcmp(arg[1], "intermol") == 0) {
-          intermol_flag = 1; 
-      } else {
-          error->all(FLERR, "Unknown keyword for pair_style nematic/angle/soft. Only 'intermol' is allowed.");
-      }
+    if (strcmp(arg[1], "intermol") == 0) {
+      intermol_flag = 1;
+    } else {
+      error->all(FLERR,
+                 "Unknown keyword for pair_style nematic/angle/soft. Only 'intermol' is allowed.");
+    }
   }
 }
 
 void PairNematicSoft::coeff(int narg, char **arg)
 {
-  // Arguments: i j A kappa theta0 [cut]
-  if (narg != 5 && narg != 6)
+  // Arguments: i j A kappa theta0 [cut [Amin]]
+  if (narg < 5 || narg > 7)
     error->all(FLERR, "Incorrect args for pair_coeff in nematic/angle/soft");
   if (!allocated) allocate();
 
@@ -97,9 +98,10 @@ void PairNematicSoft::coeff(int narg, char **arg)
   double t0_one = utils::numeric(FLERR, arg[4], false, lmp);
 
   double cut_one = cut_global;
-  if (narg == 6) {
-    cut_one = utils::numeric(FLERR, arg[5], false, lmp);
-  }
+  if (narg >= 6) cut_one = utils::numeric(FLERR, arg[5], false, lmp);
+
+  double Amin_one = 0.0;
+  if (narg == 7) Amin_one = utils::numeric(FLERR, arg[6], false, lmp);
 
   // cache trig
   double c0_one = cos(t0_one);
@@ -109,6 +111,7 @@ void PairNematicSoft::coeff(int narg, char **arg)
   for (int i = ilo; i <= ihi; i++) {
     for (int j = MAX(jlo, i); j <= jhi; j++) {
       Aamp[i][j] = A_one;
+      Amin[i][j] = Amin_one;
       kappa[i][j] = kappa_one;
       theta0[i][j] = t0_one;
       c0[i][j] = c0_one;
@@ -131,12 +134,13 @@ void PairNematicSoft::init_style()
 double PairNematicSoft::init_one(int i, int j)
 {
   if (!setflag[i][j]) {
-    Aamp[i][j] = kappa[i][j] = theta0[i][j] = 0.0;
+    Aamp[i][j] = Amin[i][j] = kappa[i][j] = theta0[i][j] = 0.0;
     c0[i][j] = s0[i][j] = 0.0;
     cut[i][j] = 0.0;
   }
 
   Aamp[j][i] = Aamp[i][j];
+  Amin[j][i] = Amin[i][j];
   kappa[j][i] = kappa[i][j];
   theta0[j][i] = theta0[i][j];
   c0[j][i] = c0[i][j];
@@ -183,9 +187,7 @@ void PairNematicSoft::compute(int eflag, int vflag)
       // Logic:
       // If intermol_flag is 1: We ONLY want intermolecular. SKIP if imol == jmol.
       // If intermol_flag is 0: We want ALL interactions. Never skip based on molecule ID.
-      if (intermol_flag && (imol == jmol)) {
-        continue;
-      }
+      if (intermol_flag && (imol == jmol)) { continue; }
 
       double delx = xtmp - x[j][0];
       double dely = ytmp - x[j][1];
@@ -203,6 +205,7 @@ void PairNematicSoft::compute(int eflag, int vflag)
 
       double rc = cut[itype][jtype];
       double Aij = Aamp[itype][jtype];
+      double Amin_ij = Amin[itype][jtype];
       double kij = kappa[itype][jtype];
       double c0ij = c0[itype][jtype];
       double s0ij = s0[itype][jtype];
@@ -221,7 +224,8 @@ void PairNematicSoft::compute(int eflag, int vflag)
       double em = exp(-2.0 * kij * sm * sm);
       double ep = exp(-2.0 * kij * sp * sp);
 
-      double Uang = (1.0 - em) * (1.0 - ep);
+      double Uang_raw = (1.0 - em) * (1.0 - ep);
+      double Uang = Amin_ij + (1.0 - Amin_ij) * Uang_raw;
 
       double xarg = M_PI * r / rc;
       double Sr = Aij * (1.0 + cos(xarg));
@@ -239,7 +243,7 @@ void PairNematicSoft::compute(int eflag, int vflag)
       double cp = c * c0ij - s * s0ij;
       double dfm = 4.0 * kij * em * sm * cm;
       double dfp = 4.0 * kij * ep * sp * cp;
-      double dUang_dtheta = dfm * (1.0 - ep) + (1.0 - em) * dfp;
+      double dUang_dtheta = (1.0 - Amin_ij) * (dfm * (1.0 - ep) + (1.0 - em) * dfp);
 
       tau_i_z = Sr * dUang_dtheta;
 
@@ -277,7 +281,7 @@ double PairNematicSoft::single(int i, int j, int itype, int jtype, double rsq, d
   fforce = 0.0;
 
   double Aij = Aamp[itype][jtype];
-  
+
   double r = sqrt(rsq);
   double xarg = M_PI * r / rc;
   double Sr = Aij * (1.0 + cos(xarg));
@@ -303,6 +307,7 @@ double PairNematicSoft::single_orientation(int itype, int jtype, double rsq, dou
     double kij = kappa[itype][jtype];
     double c0ij = c0[itype][jtype];
     double s0ij = s0[itype][jtype];
+    double Amin_ij = Amin[itype][jtype];
 
     double c = mu_i[0] * mu_j[0] + mu_i[1] * mu_j[1];
     double s = mu_i[0] * mu_j[1] - mu_i[1] * mu_j[0];
@@ -310,7 +315,7 @@ double PairNematicSoft::single_orientation(int itype, int jtype, double rsq, dou
     double sm = s * c0ij - c * s0ij;
 
     double ep = exp(-2.0 * kij * sp * sp);
-    double Uang = (1.0 - ep);
+    double Uang = Amin_ij + (1.0 - Amin_ij) * (1.0 - ep);
 
     double r = sqrt(rsq);
     double xarg = M_PI * r / rc;
@@ -327,7 +332,7 @@ void PairNematicSoft::write_restart(FILE *fp)
   Pair::write_restart(fp);
 
   fwrite(&cut_global, sizeof(double), 1, fp);
-  fwrite(&intermol_flag, sizeof(int), 1, fp); // Save the global flag
+  fwrite(&intermol_flag, sizeof(int), 1, fp);    // Save the global flag
 
   int n = atom->ntypes;
   for (int i = 1; i <= n; i++) {
@@ -335,6 +340,7 @@ void PairNematicSoft::write_restart(FILE *fp)
       fwrite(&setflag[i][j], sizeof(int), 1, fp);
       if (setflag[i][j]) {
         fwrite(&Aamp[i][j], sizeof(double), 1, fp);
+        fwrite(&Amin[i][j], sizeof(double), 1, fp);
         fwrite(&kappa[i][j], sizeof(double), 1, fp);
         fwrite(&theta0[i][j], sizeof(double), 1, fp);
         fwrite(&cut[i][j], sizeof(double), 1, fp);
@@ -350,7 +356,7 @@ void PairNematicSoft::read_restart(FILE *fp)
   allocate();
 
   fread(&cut_global, sizeof(double), 1, fp);
-  fread(&intermol_flag, sizeof(int), 1, fp); // Read the global flag
+  fread(&intermol_flag, sizeof(int), 1, fp);    // Read the global flag
 
   int n = atom->ntypes;
   for (int i = 1; i <= n; i++) {
@@ -358,6 +364,7 @@ void PairNematicSoft::read_restart(FILE *fp)
       fread(&setflag[i][j], sizeof(int), 1, fp);
       if (setflag[i][j]) {
         fread(&Aamp[i][j], sizeof(double), 1, fp);
+        fread(&Amin[i][j], sizeof(double), 1, fp);
         fread(&kappa[i][j], sizeof(double), 1, fp);
         fread(&theta0[i][j], sizeof(double), 1, fp);
         fread(&cut[i][j], sizeof(double), 1, fp);
