@@ -223,11 +223,11 @@ void PairNematicSoft::compute(int eflag, int vflag)
       double ep = exp(-2.0 * kij * sp * sp);
 
       double Uang_raw = (1.0 - em) * (1.0 - ep);
-      double Uang = Amin_ij + (1.0 - Amin_ij) * Uang_raw;
+      double Uang = Amin_ij + (Aij - Amin_ij) * Uang_raw;
 
       double xarg = M_PI * r / rc;
-      double Sr = Aij * (1.0 + cos(xarg));
-      double dSdr = -Aij * (M_PI / rc) * sin(xarg);
+      double Sr = 1.0 + cos(xarg);
+      double dSdr = -(M_PI / rc) * sin(xarg);
 
       if (eflag) energy += Sr * Uang;
 
@@ -241,7 +241,7 @@ void PairNematicSoft::compute(int eflag, int vflag)
       double cp = c * c0ij - s * s0ij;
       double dfm = 4.0 * kij * em * sm * cm;
       double dfp = 4.0 * kij * ep * sp * cp;
-      double dUang_dtheta = (1.0 - Amin_ij) * (dfm * (1.0 - ep) + (1.0 - em) * dfp);
+      double dUang_dtheta = (Aij - Amin_ij) * (dfm * (1.0 - ep) + (1.0 - em) * dfp);
 
       tau_i_z = Sr * dUang_dtheta;
 
@@ -313,11 +313,11 @@ double PairNematicSoft::single_orientation(int itype, int jtype, double rsq, dou
     double sm = s * c0ij - c * s0ij;
 
     double ep = exp(-2.0 * kij * sp * sp);
-    double Uang = Amin_ij + (1.0 - Amin_ij) * (1.0 - ep);
+    double Uang = Amin_ij + (Aij - Amin_ij) * (1.0 - ep);
 
     double r = sqrt(rsq);
     double xarg = M_PI * r / rc;
-    double Sr = Aij * (1.0 + cos(xarg));
+    double Sr = 1.0 + cos(xarg);
 
     energy += Sr * Uang;
   }
