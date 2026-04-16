@@ -84,8 +84,8 @@ void PairNematicSoft::settings(int narg, char **arg)
 
 void PairNematicSoft::coeff(int narg, char **arg)
 {
-  // Arguments: i j A kappa theta0 [cut [Amin]]
-  if (narg < 5 || narg > 7)
+  // Arguments: i j A Amin kappa theta0 [cut]
+  if (narg < 6 || narg > 7)
     error->all(FLERR, "Incorrect args for pair_coeff in nematic/angle/soft");
   if (!allocated) allocate();
 
@@ -94,14 +94,12 @@ void PairNematicSoft::coeff(int narg, char **arg)
   utils::bounds(FLERR, arg[1], 1, atom->ntypes, jlo, jhi, error);
 
   double A_one = utils::numeric(FLERR, arg[2], false, lmp);
-  double kappa_one = utils::numeric(FLERR, arg[3], false, lmp);
-  double t0_one = utils::numeric(FLERR, arg[4], false, lmp);
+  double Amin_one = utils::numeric(FLERR, arg[3], false, lmp);
+  double kappa_one = utils::numeric(FLERR, arg[4], false, lmp);
+  double t0_one = utils::numeric(FLERR, arg[5], false, lmp);
 
   double cut_one = cut_global;
-  if (narg >= 6) cut_one = utils::numeric(FLERR, arg[5], false, lmp);
-
-  double Amin_one = 0.0;
-  if (narg == 7) Amin_one = utils::numeric(FLERR, arg[6], false, lmp);
+  if (narg == 7) cut_one = utils::numeric(FLERR, arg[6], false, lmp);
 
   // cache trig
   double c0_one = cos(t0_one);
