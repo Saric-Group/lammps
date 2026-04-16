@@ -3,7 +3,7 @@
 ------------------------------------------------------------------------- */
 
 #ifdef PAIR_CLASS
-PairStyle(nematic / angle / soft, PairNematicSoft);
+PairStyle(nematic/angle/soft, PairNematicSoft);
 #else
 
 #ifndef LMP_PAIR_NEMATIC_SOFT_H
