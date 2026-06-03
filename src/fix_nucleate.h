@@ -50,6 +50,8 @@ class FixNucleate : public Fix {
     // makes two atom/property fixes and keeps track of them
     int lifetime_flag; // @FelixWodaczek/lifetime flag for lifetime keyword
     int hydrolysis_seed; // @FelixWodaczek/lifetime seed for hydrolysis keyword
+    bool lifetime_owner; // @FelixWodaczek/lifetime whether this fix is responsible for creating/deleting lifetime fix
+    bool hydrolysis_owner; // @FelixWodaczek/lifetime whether this fix is responsible for creating/deleting hydrolysis fix
     Fix *fix_lifetime;           // @FelixWodaczek/lifetime fix for atom/property i_creation_times
     Fix *fix_hydrolysis;         // @FelixWodaczek/lifetime fix for atom/property d_hydrolysis_rn
     class RanMars *hydrolysis_random; // @FelixWodaczek/lifetime random number for hydrolysis keyword
