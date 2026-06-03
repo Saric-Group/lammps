@@ -43,6 +43,8 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
   overlap = 0; overlapsq=0;
   warnflag = WARN;
   insert_sigma = 1.0;
+  lifetime_owner = false; // lifetime tracking
+  hydrolysis_owner = false; // lifetime tracking
   lifetime_flag = LIFETIME_OFF; // lifetime tracking
 
   // parse kwargs
@@ -122,8 +124,9 @@ FixNucleate::~FixNucleate() {
 
   // delete lifetime fix if not already deleted
   // fix bond/react handles the same fixes, therefore do this here
-  if (id_lifetime_fix != nullptr && modify->get_fix_by_id(id_lifetime_fix)) modify->delete_fix(id_lifetime_fix);
-  if (id_hydrolysis_fix != nullptr && modify->get_fix_by_id(id_hydrolysis_fix)) modify->delete_fix(id_hydrolysis_fix);
+  // but only run deletions if you are "responsible" for hydrolysis and lifetime fixes, i.e. if you created them and not fix bond/react
+  if (lifetime_owner && id_lifetime_fix != nullptr && modify->get_fix_by_id(id_lifetime_fix)) modify->delete_fix(id_lifetime_fix);
+  if (hydrolysis_owner && id_hydrolysis_fix != nullptr && modify->get_fix_by_id(id_hydrolysis_fix)) modify->delete_fix(id_hydrolysis_fix);
   delete[] id_lifetime_fix;
   delete[] id_hydrolysis_fix;
 }
@@ -137,6 +140,7 @@ void FixNucleate::post_constructor() {
     // if fix doesn't already exist, make it here
     // after all, fix bond/react could have already created it
     if (!modify->get_fix_by_id(id_lifetime_fix)) { 
+      lifetime_owner = true; // I am therefore in charge of the lifetime fix and should delete it in the destructor
       fix_lifetime = modify->add_fix(std::string(id_lifetime_fix) +
                                      " all property/atom i_creation_steps ghost yes");
       
@@ -149,6 +153,7 @@ void FixNucleate::post_constructor() {
     }
     if (lifetime_flag == LIFETIME_HYDROLYSIS) {
       if (!modify->get_fix_by_id(id_hydrolysis_fix)) {
+        hydrolysis_owner = true; // I am therefore in charge of the hydrolysis fix and should delete it in the destructors
         fix_hydrolysis = modify->add_fix(std::string(id_hydrolysis_fix) +
                                          " all property/atom d_hydrolysis_rn ghost yes");
         
