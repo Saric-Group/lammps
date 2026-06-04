@@ -981,11 +981,11 @@ void FixBondReact::post_constructor()
         i_creation_steps[i] = 0;
     }
     if (lifetime_flag == LIFETIME_HYDROLYSIS) {
+      hydrolysis_random = new RanMars(lmp,hydrolysis_seed + comm->me);
+      
       if (!modify->get_fix_by_id(id_hydrolysis_fix)) {
         fix_hydrolysis = modify->add_fix(std::string(id_hydrolysis_fix) +
                                          " all property/atom d_hydrolysis_rn ghost yes");
-        
-        hydrolysis_random = new RanMars(lmp,hydrolysis_seed + comm->me);
 
         // initialize per-atom hydrolysis_steps to step 0
         int flag,cols;
