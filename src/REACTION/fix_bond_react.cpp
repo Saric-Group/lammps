@@ -89,7 +89,7 @@ static constexpr double BIG = 1.0e20;
 static constexpr int DELTA = 16;
 static constexpr int MAXGUESS = 20;      // max # of guesses allowed by superimpose algorithm
 static constexpr int MAXCONARGS = 14;    // max # of arguments for any type of constraint + rxnID
-static constexpr int NUMVARVALS = 5;     // max # of keyword values that have variables as input
+static constexpr int NUMVARVALS = 7;     // max # of keyword values that have variables as input
 
 // various statuses of superimpose algorithm:
 // ACCEPT: site successfully matched to pre-reacted template
@@ -107,7 +107,7 @@ enum { DISTANCE, ANGLE, DIHEDRAL, ARRHENIUS, RMSD, CUSTOM };
 enum { ATOM, FRAG };
 
 // keyword values that accept variables as input
-enum { NEVERY, RMIN, RMAX, PROB, NRATE };
+enum { NEVERY, RMIN, RMAX, PROB, NRATE, NUCCYL_MOD, NUCCYL_RAD };
 
 // flag for one-proc vs shared reaction sites
 enum { LOCAL, GLOBAL };
@@ -483,13 +483,23 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
             else if (strcmp(arg[iarg+1], "cylinder") == 0){
               // nuc cylinder (mod width) radius
               if (strcmp(arg[iarg+2], "mod") == 0) {
-                modify_create_nuccyl_mod[rxn] =  utils::numeric(FLERR,arg[iarg+3],false,lmp); // positive orientation in X
+                if (strncmp(arg[iarg+3],"v_",2) == 0) {
+                  read_variable_keyword(&arg[iarg+3][2],NUCCYL_MOD,rxn);
+                  modify_create_nuccyl_mod[rxn] = input->variable->compute_equal(var_id[NUCCYL_MOD][rxn]);
+                } else {
+                  modify_create_nuccyl_mod[rxn] = utils::numeric(FLERR,arg[iarg+3],false,lmp); // positive orientation in X
+                }
                 iarg += 2; // mod + width
               }
               else {
                 modify_create_nuccyl_mod[rxn] = -1; // random orientation within a cylinder of radius R
               }
-              modify_create_nuccyl_rad[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp);; // random orientation within a cylinder of radius R
+              if (strncmp(arg[iarg+2],"v_",2) == 0) {
+                read_variable_keyword(&arg[iarg+2][2],NUCCYL_RAD,rxn);
+                modify_create_nuccyl_rad[rxn] = input->variable->compute_equal(var_id[NUCCYL_RAD][rxn]);
+              } else {
+                modify_create_nuccyl_rad[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // random orientation within a cylinder of radius R
+              }
               iarg += 1; // radius
             }
             iarg += 2; // nuc + cylinder
@@ -3998,6 +4008,13 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   double **coords,lamda[3],rotmat[3][3];
   double *newcoord;
   double t,delx,dely,delz,rsq;
+  double nuccyl_rad = modify_create_nuccyl_rad[rxnID];
+  double nuccyl_mod = modify_create_nuccyl_mod[rxnID];
+
+  if (var_flag[NUCCYL_RAD][rxnID])
+    nuccyl_rad = input->variable->compute_equal(var_id[NUCCYL_RAD][rxnID]);
+  if (var_flag[NUCCYL_MOD][rxnID])
+    nuccyl_mod = input->variable->compute_equal(var_id[NUCCYL_MOD][rxnID]);
 
   double **x = atom->x;
   int nlocal = atom->nlocal;
@@ -4119,19 +4136,19 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             // random position for first particle
             double phi = 2*M_PI*random[rxnID]->uniform(); // random angle on cylinder
             double y = 0.;
-            if (modify_create_nuccyl_mod[rxnID] > 0) {
+            if (nuccyl_mod > 0) {
               // Use Box-Muller transform
               // Box-Muller transform is apparently bad: https://stackoverflow.com/questions/75677/converting-a-uniform-distribution-to-a-normal-distribution
               double u1 = random[rxnID]->uniform();
               double u2 = random[rxnID]->uniform();
-              y = sqrt(-2*log(u1))*cos(2*M_PI*u2)*modify_create_nuccyl_mod[rxnID]+0.0; 
+              y = sqrt(-2*log(u1))*cos(2*M_PI*u2)*nuccyl_mod+0.0; 
             } else {
                 y = (domain->boxhi[1] - domain->boxlo[1]) * (random[rxnID]->uniform()-0.5); // random y position
             }
 
-            xfrozen[fit_incr][0] = modify_create_nuccyl_rad[rxnID]*cos(phi);
+            xfrozen[fit_incr][0] = nuccyl_rad*cos(phi);
             xfrozen[fit_incr][1] = y;
-            xfrozen[fit_incr][2] = modify_create_nuccyl_rad[rxnID]*sin(phi);
+            xfrozen[fit_incr][2] = nuccyl_rad*sin(phi);
           } else {
             // other particles! along y-axis for now, TODO: properly place other particles on cyelinder
             double* shift = new double[3];
