@@ -89,7 +89,7 @@ static constexpr double BIG = 1.0e20;
 static constexpr int DELTA = 16;
 static constexpr int MAXGUESS = 20;      // max # of guesses allowed by superimpose algorithm
 static constexpr int MAXCONARGS = 14;    // max # of arguments for any type of constraint + rxnID
-static constexpr int NUMVARVALS = 7;     // max # of keyword values that have variables as input
+static constexpr int NUMVARVALS = 8;     // max # of keyword values that have variables as input
 
 // various statuses of superimpose algorithm:
 // ACCEPT: site successfully matched to pre-reacted template
@@ -107,7 +107,7 @@ enum { DISTANCE, ANGLE, DIHEDRAL, ARRHENIUS, RMSD, CUSTOM };
 enum { ATOM, FRAG };
 
 // keyword values that accept variables as input
-enum { NEVERY, RMIN, RMAX, PROB, NRATE, NUCCYL_MOD, NUCCYL_RAD };
+enum { NEVERY, RMIN, RMAX, PROB, NRATE, NUCMOD, NUCCYL_MOD, NUCCYL_RAD };
 
 // flag for one-proc vs shared reaction sites
 enum { LOCAL, GLOBAL };
@@ -477,7 +477,12 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
             else if (strcmp(arg[iarg+1],"xor") == 0) modify_create_nucrand[rxn] = 0; // positive orientation in X
             else if (strcmp(arg[iarg+1],"mod") == 0) {
               // error->all(FLERR, "Command 'mod' has been deactivated.");
-              modify_create_nucrand[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
+              if (strncmp(arg[iarg+2],"v_",2) == 0) {
+                read_variable_keyword(&arg[iarg+2][2],NUCMOD,rxn);
+                modify_create_nucrand[rxn] = input->variable->compute_equal(var_id[NUCMOD][rxn]);
+              } else {
+                modify_create_nucrand[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
+              }
               iarg += 1;
             }
             else if (strcmp(arg[iarg+1], "cylinder") == 0){
@@ -4008,9 +4013,12 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   double **coords,lamda[3],rotmat[3][3];
   double *newcoord;
   double t,delx,dely,delz,rsq;
+  double nucrand_mod = modify_create_nucrand[rxnID];
   double nuccyl_rad = modify_create_nuccyl_rad[rxnID];
   double nuccyl_mod = modify_create_nuccyl_mod[rxnID];
 
+  if (var_flag[NUCMOD][rxnID])
+    nucrand_mod = input->variable->compute_equal(var_id[NUCMOD][rxnID]);
   if (var_flag[NUCCYL_RAD][rxnID])
     nuccyl_rad = input->variable->compute_equal(var_id[NUCCYL_RAD][rxnID]);
   if (var_flag[NUCCYL_MOD][rxnID])
@@ -4112,14 +4120,14 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
           }
         }
         else if (modify_create_nucrand[rxnID] > 1) {
-          // Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
+          // Sample normal distribution in Y (with standard deviation nucrand_mod) for new position -- Chris 28/07/2023
           double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
-          if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID] - Sample normal distribution in Y (with standard deviation modify_create_nucrand[rxnID]) for new position -- Chris 28/07/2023
+          if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID] - Sample normal distribution in Y (with standard deviation nucrand_mod) for new position -- Chris 28/07/2023
             xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
             // Two RN -> 1 Normal-distributed number
             double u1 = random[rxnID]->uniform();
             double u2 = random[rxnID]->uniform();
-            xfrozen[fit_incr][1] = sqrt(-2*log(u1))*cos(2*M_PI*u2)*modify_create_nucrand[rxnID]+0.0;
+            xfrozen[fit_incr][1] = sqrt(-2*log(u1))*cos(2*M_PI*u2)*nucrand_mod+0.0;
             xfrozen[fit_incr][2] = 0.0;
           }
           else {
