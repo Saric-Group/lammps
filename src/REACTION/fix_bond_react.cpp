@@ -4245,9 +4245,9 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
       if (create_atoms[m][rxnID] == 1) {
         for (int i = 0; i < nlocal; i++) {
           if (
-            overlapexcept[rxnID][twomol->type[m]] || overlapexcept[rxnID][atom->type[i]] 
+            overlapexcept[rxnID][twomol->type[m]] || overlapexcept[rxnID][atom->type[i]] ||
+            (ignore_own_molecule[rxnID] && (twomol->molecule[m] == atom->molecule[i])) 
           ) continue;
-          if (ignore_own_molecule[rxnID] && (twomol->molecule[m] == atom->molecule[i])) printf("Skipping overlap check for atom %d and new atom %d because they are in the same molecule: %d\n", m, atom->tag[i], atom->molecule[i]); continue;
           delx = coords[m][0] - x[i][0];
           dely = coords[m][1] - x[i][1];
           delz = coords[m][2] - x[i][2];
@@ -4270,9 +4270,9 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         for (int m = 0; m < twomol->natoms; m++) {
           if (create_atoms[m][rxnID] == 1) {
             if (
-              overlapexcept[rxnID][twomol->type[m]] || overlapexcept[rxnID][myaddatom.type] 
+              overlapexcept[rxnID][twomol->type[m]] || overlapexcept[rxnID][myaddatom.type] ||
+              (ignore_own_molecule[rxnID] && (twomol->molecule[m] == myaddatom.molecule))
             ) continue;
-            if (ignore_own_molecule[rxnID] && (twomol->molecule[m] == myaddatom.molecule)) printf("Skipping overlap check for atom %d and new atom %d because they are in the same molecule: %d\n", m, myaddatom.tag, myaddatom.molecule); continue;
             delx = coords[m][0] - myaddatom.x[0];
             dely = coords[m][1] - myaddatom.x[1];
             delz = coords[m][2] - myaddatom.x[2];
