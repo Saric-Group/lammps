@@ -273,6 +273,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(overlapexcept,nreacts,atom->ntypes, "bond/react:overlapexcept"); // @FelixWodaczek ignore atom types in insertion overlap check
   memory->create(rxn_is_overlap_typed,nreacts, "bond/react:is_overlap_typed"); // @FelixWodaczek make per-particle overlap cutoffs
   memory->create(type_overlapsq,nreacts,atom->ntypes,"bond/react:type_overlapsq"); // @FelixWodaczek make per-particle overlap cutoffs
+  memory->create(ignore_own_molecule,nreacts,"bond/react:ignore_own_molecule"); // @FelixWodaczek ignore all overlap checks with own molid to allow for self-overlap
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
   memory->create(nconstraints,nreacts,"bond/react:nconstraints");
   memory->create(constraintstr,nreacts,MAXLINE,"bond/react:constraintstr");
@@ -322,6 +323,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
       type_overlapsq[i][itype] = 0.;
     }
     rxn_is_overlap_typed[i] = false;
+    ignore_own_molecule[i] = false; // @FelixWodaczek ignore all overlap checks with own molid to allow for self-overlap
   }
 
   char **files;
@@ -525,6 +527,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
                                           "'modify_create' has too few arguments");
             overlapsq[rxn] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
             overlapsq[rxn] *= overlapsq[rxn];
+
             iarg += 2;
             if (iarg!=narg && strcmp(arg[iarg], "types") == 0) {
               int num_overlap_types = utils::inumeric(FLERR, arg[iarg + 1], false, lmp);
@@ -543,6 +546,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
                 type_overlapsq[rxn][atype] *= type_overlapsq[rxn][atype];
               }
               iarg += 2 + (2 * num_overlap_types);
+            } else if (strcmp(arg[iarg], "ignore_own_molecule") == 0) {
+              ignore_own_molecule[rxn] = true; // ignore all overlap checks with own molid to allow for self-overlap
+              iarg += 1;
             }
           } else break;
         }
@@ -824,6 +830,10 @@ FixBondReact::~FixBondReact()
   memory->destroy(modify_create_nuccyl_rad); // added for cylinder nucleation
   memory->destroy(modify_create_nuccyl_mod); // added for cylinder nucleation
   memory->destroy(overlapsq);
+  memory->destroy(overlapexcept);
+  memory->destroy(rxn_is_overlap_typed);
+  memory->destroy(type_overlapsq);
+  memory->destroy(ignore_own_molecule);
 
   memory->destroy(iatomtype);
   memory->destroy(jatomtype);
@@ -4234,7 +4244,10 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
     for (int m = 0; m < twomol->natoms; m++) {
       if (create_atoms[m][rxnID] == 1) {
         for (int i = 0; i < nlocal; i++) {
-          if (overlapexcept[rxnID][twomol->type[m]] || overlapexcept[rxnID][atom->type[i]]) continue;
+          if (
+            overlapexcept[rxnID][twomol->type[m]] || overlapexcept[rxnID][atom->type[i]] ||
+            (ignore_own_molecule[rxnID] && (twomol->molecule[m] == atom->molecule[i])) 
+          ) continue;
           delx = coords[m][0] - x[i][0];
           dely = coords[m][1] - x[i][1];
           delz = coords[m][2] - x[i][2];
@@ -4256,7 +4269,10 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
       for (auto & myaddatom : addatoms) {
         for (int m = 0; m < twomol->natoms; m++) {
           if (create_atoms[m][rxnID] == 1) {
-            if (overlapexcept[rxnID][twomol->type[m]] || overlapexcept[rxnID][myaddatom.type]) continue;
+            if (
+              overlapexcept[rxnID][twomol->type[m]] || overlapexcept[rxnID][myaddatom.type] ||
+              (ignore_own_molecule[rxnID] && (twomol->molecule[m] == myaddatom.molecule))
+            ) continue;
             delx = coords[m][0] - myaddatom.x[0];
             dely = coords[m][1] - myaddatom.x[1];
             delz = coords[m][2] - myaddatom.x[2];

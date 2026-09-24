@@ -86,6 +86,7 @@ class FixBondReact : public Fix {
   double *overlapsq;
   bool *rxn_is_overlap_typed;
   double **type_overlapsq;
+  bool *ignore_own_molecule; // @FelixWodaczek ignore all overlap checks with own molid to allow for self-overlap
   bool **overlapexcept; // exception list for overlap checking
   int *molecule_keyword;
   int maxnconstraints;
