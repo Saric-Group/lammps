@@ -546,7 +546,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
                 type_overlapsq[rxn][atype] *= type_overlapsq[rxn][atype];
               }
               iarg += 2 + (2 * num_overlap_types);
-            } else if (strcmp(arg[iarg], "ignore_own_molecule") == 0) {
+            } else if (iarg!=narg && (strcmp(arg[iarg], "ignore_own_molecule") == 0)) {
               ignore_own_molecule[rxn] = true; // ignore all overlap checks with own molid to allow for self-overlap
               iarg += 1;
             }
