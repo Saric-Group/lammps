@@ -98,6 +98,7 @@ class FixBondReact : public Fix {
   int atoms2bondflag;           // 1 if atoms2bond map has been populated on this timestep
   int narrhenius;
   int **var_flag, **var_id;     // for keyword values with variable inputs
+  std::string **var_name;       // names for re-resolving variable inputs
   int status;
   int *groupbits;
 
@@ -194,6 +195,7 @@ class FixBondReact : public Fix {
   int glove_counter;       // used to determine when to terminate Superimpose Algorithm
 
   void read_variable_keyword(const char *, int, int);
+  double compute_variable(int, int);
   void read_map_file(int);
   void EdgeIDs(char *, int);
   void Equivalences(char *, int);
