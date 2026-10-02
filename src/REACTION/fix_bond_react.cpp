@@ -526,31 +526,35 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
             iarg += 2 + num_except_types;
           } else if (strcmp(arg[iarg],"overlap") == 0) {
             if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
-                                          "'modify_create' has too few arguments");
+                                          "'modify_create overlap' has too few arguments");
             overlapsq[rxn] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
             overlapsq[rxn] *= overlapsq[rxn];
 
             iarg += 2;
-            if (iarg!=narg && strcmp(arg[iarg], "types") == 0) {
-              int num_overlap_types = utils::inumeric(FLERR, arg[iarg + 1], false, lmp);
+            while(true) {
+              if (iarg!=narg && strcmp(arg[iarg], "types") == 0) {
+                int num_overlap_types = utils::inumeric(FLERR, arg[iarg + 1], false, lmp);
 
-              if (iarg + 2 + (2 * num_overlap_types) > narg) error->all(FLERR, "Illegal fix bond/react react modify_create overlap types subcommand: "
-                "'types' has too few arguments. "
-                "Supply a number of special types n_types and then 2 * n_types pairs of atom_type cutoff.");
-              
-              rxn_is_overlap_typed[rxn] = true;
-              for (int itype=0; itype<atom->ntypes; itype++) type_overlapsq[rxn][itype] = overlapsq[rxn];
+                if (iarg + 2 + (2 * num_overlap_types) > narg) error->all(FLERR, "Illegal fix bond/react react modify_create overlap types subcommand: "
+                  "'types' has too few arguments. "
+                  "Supply a number of special types n_types and then 2 * n_types pairs of atom_type cutoff.");
+                
+                rxn_is_overlap_typed[rxn] = true;
+                for (int itype=0; itype<atom->ntypes; itype++) type_overlapsq[rxn][itype] = overlapsq[rxn];
 
-              for (int otind = 0; otind < num_overlap_types; otind++) {
-                int atype = utils::inumeric(FLERR, arg[iarg + 2 + (2 * otind)], false, lmp);
-                double atype_cutoff = utils::numeric(FLERR, arg[iarg + 3 + (2 * otind)], false, lmp);
-                type_overlapsq[rxn][atype] = atype_cutoff;
-                type_overlapsq[rxn][atype] *= type_overlapsq[rxn][atype];
+                for (int otind = 0; otind < num_overlap_types; otind++) {
+                  int atype = utils::inumeric(FLERR, arg[iarg + 2 + (2 * otind)], false, lmp);
+                  double atype_cutoff = utils::numeric(FLERR, arg[iarg + 3 + (2 * otind)], false, lmp);
+                  type_overlapsq[rxn][atype] = atype_cutoff;
+                  type_overlapsq[rxn][atype] *= type_overlapsq[rxn][atype];
+                }
+                iarg += 2 + (2 * num_overlap_types);
+              } else if (iarg!=narg && (strcmp(arg[iarg], "ignore_own_molecule") == 0)) {
+                ignore_own_molecule[rxn] = true; // ignore all overlap checks with own molid to allow for self-overlap
+                iarg += 1;
+              } else {
+                break;
               }
-              iarg += 2 + (2 * num_overlap_types);
-            } else if (iarg!=narg && (strcmp(arg[iarg], "ignore_own_molecule") == 0)) {
-              ignore_own_molecule[rxn] = true; // ignore all overlap checks with own molid to allow for self-overlap
-              iarg += 1;
             }
           } else break;
         }
@@ -4056,6 +4060,22 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   int nlocal = atom->nlocal;
   int dimension = domain->dimension;
 
+  // function for figuring out molecule ID from reaction template, only useful in matching mol-IDs
+  // returns the number of the molecule, if the molecule is present in pre-reaction-template
+  // otherwise returns 0, so new molecule will be created
+  // this is enough for comparing molecule ID overlap later when ignoring intra-molecular overlap
+  auto created_molecule = [&](int m) {
+    if (!atom->molecule_flag || !onemol->moleculeflag || !twomol->moleculeflag)
+      return static_cast<tagint>(0);
+    for (int k = 0; k < onemol->natoms; k++) {
+      if (twomol->molecule[m] != onemol->molecule[k]) continue;
+      int ilocal = atom->map(my_update_mega_glove[k+1][iupdate]);
+      if (ilocal >= 0 && ilocal < atom->nlocal + atom->nghost)
+        return atom->molecule[ilocal];
+    }
+    return static_cast<tagint>(0);
+  };
+
   memory->create(coords,twomol->natoms,3,"bond/react:coords");
   memory->create(imageflags,twomol->natoms,"bond/react:imageflags");
 
@@ -4261,10 +4281,11 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
     int abortflag = 0;
     for (int m = 0; m < twomol->natoms; m++) {
       if (create_atoms[m][rxnID] == 1) {
+        tagint molecule = created_molecule(m);
         for (int i = 0; i < nlocal; i++) {
           if (
             overlapexcept[rxnID][twomol->type[m]] || overlapexcept[rxnID][atom->type[i]] ||
-            (ignore_own_molecule[rxnID] && (twomol->molecule[m] == atom->molecule[i])) 
+            (ignore_own_molecule[rxnID] && molecule != 0 && molecule == atom->molecule[i])
           ) continue;
           delx = coords[m][0] - x[i][0];
           dely = coords[m][1] - x[i][1];
@@ -4287,9 +4308,10 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
       for (auto & myaddatom : addatoms) {
         for (int m = 0; m < twomol->natoms; m++) {
           if (create_atoms[m][rxnID] == 1) {
+            tagint molecule = created_molecule(m);
             if (
               overlapexcept[rxnID][twomol->type[m]] || overlapexcept[rxnID][myaddatom.type] ||
-              (ignore_own_molecule[rxnID] && (twomol->molecule[m] == myaddatom.molecule))
+              (ignore_own_molecule[rxnID] && molecule != 0 && molecule == myaddatom.molecule)
             ) continue;
             delx = coords[m][0] - myaddatom.x[0];
             dely = coords[m][1] - myaddatom.x[1];
@@ -4375,7 +4397,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
 
         myaddatom.mask = 1 | groupbit;
         myaddatom.image = imageflags[m];
-        if (atom->molecule_flag) myaddatom.molecule = 0;
+        myaddatom.molecule = created_molecule(m);
 
         // guess a somewhat reasonable initial velocity based on reaction site
         // further control is possible using bond_react_MASTER_group
