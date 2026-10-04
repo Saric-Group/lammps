@@ -37,7 +37,7 @@ using namespace MathConst;
 
 PairHarmonicSurface::PairHarmonicSurface(LAMMPS *lmp) : Pair(lmp), k(nullptr), r_zero(nullptr), cut(nullptr)
 {
-  born_matrix_enable = 1;
+  born_matrix_enable = 0; // born_matrix() is not implemented
   writedata = 1;
 }
 
@@ -97,6 +97,7 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       j = jlist[jj];
       factor_lj = special_lj[sbmask(j)];
       j &= NEIGHMASK;
+      jtype = type[j];
 
       // determine normal vector at surface atom
       if (jtype == surface_type) {
@@ -107,16 +108,17 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
         iinteract = j;
       } else {
         continue; // not interacting with surface, skip quietly
-        error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
       }
 
       delx = x[iinteract][0] - x[isurf][0];
       dely = x[iinteract][1] - x[isurf][1];
       delz = x[iinteract][2] - x[isurf][2];
-      rsq = delx * delx + dely * dely + delz * delz;
-      jtype = type[j];
+      rsq = delx * delx + delz * delz + dely * dely;
+      if (rsq >= cutsq[itype][jtype]) continue;
 
-      if (!atom->ellipsoid_flag) error->all(FLERR, "Atom with index %d and type %d is not an ellipsoid, cannot obtain normal for pair style harmonic/surface", isurf, surface_type);
+      if (atom->ellipsoid[isurf] < 0)
+        error->one(FLERR, "Atom {} of surface type {} is not an ellipsoid, cannot obtain normal for pair style harmonic/surface",
+                   atom->tag[isurf], surface_type);
       // taken from pair_ylz.cpp
       // does this mean longest axis has to be x?
       // or are the ellipsoid axis sorted by length?
@@ -132,45 +134,36 @@ void PairHarmonicSurface::compute(int eflag, int vflag)
       normy /= normr;
       normz /= normr;
 
-      if (rsq < cutsq[itype][jtype]) {
-        const double r = sqrt(rsq);
-        costheta_max = r_zero[itype][jtype] / cut[itype][jtype];
-        const double align = std::abs(delx * normx + dely * normy + delz * normz) / r; // [0, 1] alignment of delta with surface normal.
-        double theta_fact = (align - costheta_max) / (1.0 - costheta_max); // linear decay of force magnitude when going away from ideal alignment
-        theta_fact = theta_fact > 0 ? theta_fact : 0;
-        double delta = r_zero[itype][jtype] - (r * align); // only consider distance along normal for harmonic potential
-        const double prefactor = factor_lj * delta * k[itype][jtype] * theta_fact;
-        const double fpair = 2.0 * prefactor; //  / r;
-        
-        if (itype == surface_type) {
-          // fpair is negative when larger than r_zero
-          // therefore change sign here to move surface atoms inwards
-          // therefore along normal, this should point inwards
-          fxtmp -= fpair * normx; // align * 
-          fytmp -= fpair * normy; // align * 
-          fztmp -= fpair * normz; // align * 
-          if (newton_pair || j < nlocal) {
-              f[j][0] += fpair * normx; // align * 
-              f[j][1] += fpair * normy; // align * 
-              f[j][2] += fpair * normz; // align * 
-          }
-        } else if (jtype == surface_type) {
-          fxtmp += fpair * normx; // align * 
-          fytmp += fpair * normy; // align * 
-          fztmp += fpair * normz; // align * 
-          if (newton_pair || j < nlocal) {
-              f[j][0] -= fpair * normx; // align * 
-              f[j][1] -= fpair * normy; // align * 
-              f[j][2] -= fpair * normz; // align * 
-          }
-        } else {
-          error->all(FLERR, "Pair between type %d and %d does not contain given surface type %d.", itype, jtype, surface_type);
-        }
+      const double r = sqrt(rsq);
+      costheta_max = r_zero[itype][jtype] / cut[itype][jtype];
+      const double align = std::abs(delx * normx + dely * normy + delz * normz) / r; // [0, 1] alignment of delta with surface normal.
+      double theta_fact = (align - costheta_max) / (1.0 - costheta_max); // linear decay of force magnitude when going away from ideal alignment
+      theta_fact = theta_fact > 0 ? theta_fact : 0;
+      const double delta = r_zero[itype][jtype] - (r * align); // only consider distance along normal for harmonic potential
+      const double prefactor = factor_lj * delta * k[itype][jtype] * theta_fact;
+      const double fpair = 2.0 * prefactor;
 
-        if (evflag) {
-          const double philj = prefactor * delta;
-          ev_tally(i, j, nlocal, newton_pair, philj, 0.0, fpair, delx, dely, delz);
-        }
+      // the interacting atom is pushed along the normal (fpair < 0 pulls it towards the surface),
+      // the surface atom feels the opposite force
+      const double sign = (isurf == i) ? -1.0 : 1.0;
+      const double fix = sign * fpair * normx;
+      const double fiy = sign * fpair * normy;
+      const double fiz = sign * fpair * normz;
+
+      fxtmp += fix;
+      fytmp += fiy;
+      fztmp += fiz;
+      if (newton_pair || j < nlocal) {
+        f[j][0] -= fix;
+        f[j][1] -= fiy;
+        f[j][2] -= fiz;
+      }
+
+      if (evflag) {
+        // force is not along the pair vector, tally the virial with its components
+        const double philj = prefactor * delta;
+        ev_tally_xyz(i, j, nlocal, newton_pair, philj, 0.0, fix, fiy, fiz,
+                     x[i][0] - x[j][0], x[i][1] - x[j][1], x[i][2] - x[j][2]);
       }
     }
     f[i][0] += fxtmp;
@@ -209,7 +202,8 @@ void PairHarmonicSurface::settings(int narg, char **arg)
 {
   if (narg != 1) error->all(FLERR, "Illegal pair_style command");
 
-  surface_type = utils::numeric(FLERR, arg[0], false, lmp);
+  surface_type = utils::inumeric(FLERR, arg[0], false, lmp);
+  if (surface_type < 1) error->all(FLERR, "Illegal surface type {} for pair style harmonic/surface", surface_type);
 }
 
 /* ----------------------------------------------------------------------
@@ -228,10 +222,11 @@ void PairHarmonicSurface::coeff(int narg, char **arg)
   double k_one = utils::numeric(FLERR, arg[2], false, lmp);
   double r_zero_one = utils::numeric(FLERR, arg[3], false, lmp);
   double cut_one = utils::numeric(FLERR, arg[4], false, lmp);
-  double normal_factor_one = -1;
+  int normal_factor_one = -1;
   if (narg == 6) normal_factor_one = utils::inumeric(FLERR, arg[5], false, lmp);
 
-  if (!(normal_factor_one == 1 || normal_factor_one == -1)) error->all(FLERR, "Multiplier for surface normal has to be either -1 or 1, found %d.", normal_factor_one);
+  if (!(normal_factor_one == 1 || normal_factor_one == -1))
+    error->all(FLERR, "Multiplier for surface normal has to be either -1 or 1, found {}.", normal_factor_one);
 
   // int surf_type = utils::inumeric(FLERR, arg[5], false, lmp); // TODO: projection, read an extra variable here for which atom type to extract normal from
 
@@ -256,10 +251,9 @@ void PairHarmonicSurface::coeff(int narg, char **arg)
 
 double PairHarmonicSurface::init_one(int i, int j)
 {
-  if (setflag[i][j] == 0) {
-    cut[i][j] = mix_distance(cut[i][i], cut[j][j]);
-    k[i][j] = mix_energy(k[i][i], k[j][j], cut[i][i], cut[j][j]);
-  }
+  // mixing is not defined for r_zero and the normal multiplier
+  if (setflag[i][j] == 0) error->all(FLERR, "All pair coeffs are not set (pair style harmonic/surface does not support mixing)");
+
   k[j][i] = k[i][j];
   r_zero[j][i] = r_zero[i][j];
   cut[j][i] = cut[i][j];
@@ -355,7 +349,8 @@ void PairHarmonicSurface::read_restart_settings(FILE *fp)
 
 void PairHarmonicSurface::write_data(FILE *fp)
 {
-  for (int i = 1; i <= atom->ntypes; i++) fprintf(fp, "%d %g %g\n", i, k[i][i], r_zero[i][i], cut[i][i], normal_factor[i][i]);
+  for (int i = 1; i <= atom->ntypes; i++)
+    fprintf(fp, "%d %g %g %g %d\n", i, k[i][i], r_zero[i][i], cut[i][i], normal_factor[i][i]);
 }
 
 /* ----------------------------------------------------------------------
@@ -365,7 +360,8 @@ void PairHarmonicSurface::write_data(FILE *fp)
 void PairHarmonicSurface::write_data_all(FILE *fp)
 {
   for (int i = 1; i <= atom->ntypes; i++)
-    for (int j = i; j <= atom->ntypes; j++) fprintf(fp, "%d %d %g %g %g\n", i, j, k[i][j], r_zero[i][j], cut[i][j], normal_factor[i][j]);
+    for (int j = i; j <= atom->ntypes; j++)
+      fprintf(fp, "%d %d %g %g %g %d\n", i, j, k[i][j], r_zero[i][j], cut[i][j], normal_factor[i][j]);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -418,6 +414,6 @@ void *PairHarmonicSurface::extract(const char *str, int &dim)
   if (strcmp(str, "k") == 0) return (void *) k;
   if (strcmp(str, "r_zero") == 0) return (void *) r_zero;
   if (strcmp(str, "cut") == 0) return (void *) cut;
-  if (strcmp(str, "normal_factor") == 0) return (void *) normal_factor;
+  // normal_factor is an int array and cannot be extracted as double (e.g. by fix adapt)
   return nullptr;
 }
