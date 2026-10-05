@@ -25,6 +25,7 @@ PairStyle(harmonic/surface/avg,PairHarmonicSurfaceAvg);
 namespace LAMMPS_NS {
 
 enum { ATOMVECS };    // forward comm, currently only AtomVecs which are part of fix anyways
+enum { REVERSE_ALL, REVERSE_COUNT };    // reverse comm of normal vector sums and counts, or counts only
 
 class PairHarmonicSurfaceAvg : public Pair {
  public:
@@ -46,6 +47,8 @@ class PairHarmonicSurfaceAvg : public Pair {
 
   int pack_forward_comm(int, int *, double *, int, int *) override;
   void unpack_forward_comm(int, int, double *) override;
+  int pack_reverse_comm(int, int, double *) override;
+  void unpack_reverse_comm(int, int *, double *) override;
 
  protected:
   double **k, **r_zero, **cut, **cut_tang;
@@ -69,6 +72,7 @@ class PairHarmonicSurfaceAvg : public Pair {
   virtual void allocate();
   // virtual void grow_local();
   int cfstyle;
+  int crstyle;
 };
 
 }    // namespace LAMMPS_NS
