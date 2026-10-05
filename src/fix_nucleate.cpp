@@ -43,6 +43,8 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
   overlap = 0; overlapsq=0;
   warnflag = WARN;
   insert_sigma = 1.0;
+  bond_type = 1; // bond type of the inserted dimer
+  noffset = 0; // run when (step - noffset) % nevery == 0
   lifetime_owner = false; // lifetime tracking
   hydrolysis_owner = false; // lifetime tracking
   lifetime_flag = LIFETIME_OFF; // lifetime tracking
@@ -79,6 +81,8 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
         error->all(FLERR, "Missing numeric parameter after bond_type kwarg.");
       
       bond_type = utils::inumeric(FLERR, arg[iarg+1], false, lmp);
+      if (bond_type < 1 || bond_type > atom->nbondtypes)
+        error->all(FLERR, "Invalid bond type {} for fix nucleate", bond_type);
       iarg += 2;
     } else if (strcmp(arg[iarg],"nowarn") == 0) {
       warnflag = NOWARN;
@@ -424,9 +428,12 @@ void FixNucleate::post_integrate() {
   // now that map exists again, add bonds back in
   for (int iinsert=0; iinsert<my_insertions; iinsert++) {
     // as taken from create_bonds.cpp
-    atom->bond_type[atom->map(atom->tag[nlocal_prev+2*iinsert])][0] = 1; // TODO: should be a variable bond type
-    atom->bond_atom[atom->map(atom->tag[nlocal_prev+2*iinsert])][0] = atom->tag[nlocal_prev+(2*iinsert)+1];
-    atom->num_bond[atom->map(atom->tag[nlocal_prev+2*iinsert])] = 1;
+    // the bond is stored on the first atom, with newton_bond off also on the second (see below)
+    const int ifirst = nlocal_prev + 2*iinsert;
+    const int isecond = ifirst + 1;
+    atom->bond_type[ifirst][0] = bond_type;
+    atom->bond_atom[ifirst][0] = atom->tag[isecond];
+    atom->num_bond[ifirst] = 1;
     
     // and, importantly, also add marker for 1-2 special interaction (bonds)
     atom->nspecial[nlocal_prev+2*iinsert][0] = 1;
@@ -441,17 +448,19 @@ void FixNucleate::post_integrate() {
     rebuild_special_one(nlocal_prev+2*iinsert+1);
 
     if (!force->newton_bond) {
-      atom->bond_type[atom->map(atom->tag[nlocal_prev+2*iinsert])][bond_type] = 1;
-      atom->bond_atom[atom->map(atom->tag[nlocal_prev+2*iinsert])][bond_type] = atom->tag[nlocal_prev+2*iinsert];
-      atom->num_bond[atom->map(atom->tag[nlocal_prev+2*iinsert])] = 1;
+      atom->bond_type[isecond][0] = bond_type;
+      atom->bond_atom[isecond][0] = atom->tag[ifirst];
+      atom->num_bond[isecond] = 1;
     }
   }
 
-  // also all taken from create_bonds.cpp
+  // update the global bond count, as in create_bonds.cpp
+  // (count over all local atoms including the inserted ones)
   bigint nbonds = 0;
-  for (int i = 0; i < nlocal; i++) nbonds += atom->num_bond[i];
+  for (int i = 0; i < atom->nlocal; i++) nbonds += atom->num_bond[i];
   MPI_Allreduce(MPI_IN_PLACE,&nbonds,1,MPI_LMP_BIGINT,MPI_SUM,world);
-  if (!force->newton_bond) atom->nbonds /= 2;
+  if (!force->newton_bond) nbonds /= 2;
+  atom->nbonds = nbonds;
 
   next_reneighbor = update->ntimestep;
 
