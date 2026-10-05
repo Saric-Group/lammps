@@ -72,6 +72,13 @@ class FixBondReact : public Fix {
   int hydrolysis_seed; // @FelixWodaczek/lifetime seed for hydrolysis keyword
   bool lifetime_owner;   // true if this fix created the lifetime property fix
   bool hydrolysis_owner; // true if this fix created the hydrolysis property fix
+  // @FelixWodaczek/chain-index per-reaction update of the per-atom chain index i_chain_index
+  int *chain_mode;                                   // CHAIN_NONE, CHAIN_GROW, CHAIN_SHRINK, CHAIN_NUCLEATE
+  std::vector<std::vector<int>> chain_nucleate_values; // indices of created atoms for CHAIN_NUCLEATE
+  int chain_index_anyflag;                           // 1 if any reaction updates the chain index
+  int chain_cuff;                                    // mega_glove row that carries the chain index value
+  int chain_index_property;                          // index of i_chain_index in atom->ivector
+  double *chain_values;                              // chain index value of each reaction in update_everything()
   int custom_exclude_flag;
   int **rate_limit;
   int **store_rxn_count;
@@ -219,6 +226,7 @@ class FixBondReact : public Fix {
   void get_IDcoords(int, int, double *);
   double get_temperature(tagint **, int, int);
   double get_totalcharge();
+  double get_chain_value(int); // @FelixWodaczek/chain-index
   void customvarnames();    // get per-atom variables names used by custom constraint
   void get_customvars();    // evaluate local values for variables names used by custom constraint
   double custom_constraint(const std::string &);    // evaulate expression for custom constraint
@@ -273,6 +281,7 @@ class FixBondReact : public Fix {
   struct AddAtom {
     tagint tag, molecule;
     int type, mask;
+    int chain_index; // @FelixWodaczek/chain-index
     imageint image;
     double rmass, x[3], v[3];
   };
