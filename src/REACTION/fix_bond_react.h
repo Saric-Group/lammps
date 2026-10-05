@@ -70,6 +70,8 @@ class FixBondReact : public Fix {
   RESET_MOL_IDS molid_mode;
   int lifetime_flag; // @FelixWodaczek/lifetime flag for lifetime keyword
   int hydrolysis_seed; // @FelixWodaczek/lifetime seed for hydrolysis keyword
+  bool lifetime_owner;   // true if this fix created the lifetime property fix
+  bool hydrolysis_owner; // true if this fix created the hydrolysis property fix
   int custom_exclude_flag;
   int **rate_limit;
   int **store_rxn_count;
@@ -81,6 +83,7 @@ class FixBondReact : public Fix {
   int *create_atoms_flag;
   int *modify_create_fragid;
   int *modify_create_nucrand;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+  double *modify_create_nucmod;        // standard deviation in y of 'nuc mod' placement
   double *modify_create_nuccyl_rad; // added for cylinder nucleation
   double *modify_create_nuccyl_mod; // added for cylinder nucleation
   double *overlapsq;

@@ -115,6 +115,9 @@ enum { LOCAL, GLOBAL };
 // values for molecule_keyword
 enum { OFF, INTER, INTRA };
 
+// values for modify_create_nucrand
+enum { NUC_OFF = -1, NUC_XOR = 0, NUC_YES = 1, NUC_MOD = 2 };
+
 // values for lifetime_flag
 enum { LIFETIME_OFF, LIFETIME_ON, LIFETIME_HYDROLYSIS };
 
@@ -198,6 +201,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   stabilization_flag = 0;
   molid_mode = RESET_MOL_IDS::YES;
   lifetime_flag = 0;
+  lifetime_owner = false;
+  hydrolysis_owner = false;
   int num_common_keywords = 3; // @FelixWodaczek/lifetime changed from 2 to 3
   for (int m = 0; m < num_common_keywords; m++) {
     if (strcmp(arg[iarg],"stabilization") == 0) {
@@ -223,6 +228,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
                                     "'lifetime' keyword has too few arguments");
       
       if (strcmp(arg[iarg+1], "hydrolysis") == 0) {
+          if (iarg + 3 > narg) error->all(FLERR, "Illegal fix bond/react command: "
+                                          "'lifetime hydrolysis' keyword has too few arguments");
           lifetime_flag = LIFETIME_HYDROLYSIS;
           hydrolysis_seed = utils::inumeric(FLERR, arg[iarg + 2], false, lmp);
           iarg += 1;
@@ -267,12 +274,13 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(create_atoms_flag,nreacts,"bond/react:create_atoms_flag");
   memory->create(modify_create_fragid,nreacts,"bond/react:modify_create_fragid");
   memory->create(modify_create_nucrand,nreacts,"bond/react:modify_create_nucrand");          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+  memory->create(modify_create_nucmod,nreacts,"bond/react:modify_create_nucmod");
   memory->create(modify_create_nuccyl_rad,nreacts,"bond/react:modify_create_nuccyl_rad"); // added for cylinder nucleation
   memory->create(modify_create_nuccyl_mod,nreacts,"bond/react:modify_create_nuccyl_mod"); // added for cylinder nucleation
   memory->create(overlapsq,nreacts,"bond/react:overlapsq");
-  memory->create(overlapexcept,nreacts,atom->ntypes, "bond/react:overlapexcept"); // @FelixWodaczek ignore atom types in insertion overlap check
+  memory->create(overlapexcept,nreacts,atom->ntypes+1, "bond/react:overlapexcept"); // @FelixWodaczek ignore atom types in insertion overlap check
   memory->create(rxn_is_overlap_typed,nreacts, "bond/react:is_overlap_typed"); // @FelixWodaczek make per-particle overlap cutoffs
-  memory->create(type_overlapsq,nreacts,atom->ntypes,"bond/react:type_overlapsq"); // @FelixWodaczek make per-particle overlap cutoffs
+  memory->create(type_overlapsq,nreacts,atom->ntypes+1,"bond/react:type_overlapsq"); // @FelixWodaczek make per-particle overlap cutoffs
   memory->create(ignore_own_molecule,nreacts,"bond/react:ignore_own_molecule"); // @FelixWodaczek ignore all overlap checks with own molid to allow for self-overlap
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
   memory->create(nconstraints,nreacts,"bond/react:nconstraints");
@@ -304,7 +312,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     rescale_charges_flag[i] = 0;
     create_atoms_flag[i] = 0;
     modify_create_fragid[i] = -1;
-    modify_create_nucrand[i] = -1;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+    modify_create_nucrand[i] = NUC_OFF;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+    modify_create_nucmod[i] = 0.0;
     modify_create_nuccyl_rad[i] = -1; // added for cylinder nucleation
     modify_create_nuccyl_mod[i] = -1; // added for cylinder nucleation
     overlapsq[i] = 0.0;
@@ -320,8 +329,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
       var_flag[j][i] = 0;
       var_id[j][i] = 0;
     }
-    for (int itype=0; itype<atom->ntypes; itype++) {
-      overlapexcept[i][itype] = false; 
+    for (int itype=0; itype<=atom->ntypes; itype++) {
+      overlapexcept[i][itype] = false;
       type_overlapsq[i][itype] = 0.;
     }
     rxn_is_overlap_typed[i] = false;
@@ -476,16 +485,19 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
           } else if (strcmp(arg[iarg],"nuc") == 0) {                                                // Adding a flag "nuc" to nucleate the new dimer in a random position within the box, independent of the position of the nucleator - Chris 22/02/2023
             if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                           "'modify_create' has too few arguments");
-            if (strcmp(arg[iarg+1],"no") == 0) modify_create_nucrand[rxn] = -1; //default
-            else if (strcmp(arg[iarg+1],"yes") == 0) modify_create_nucrand[rxn] = 1; // random orientation
-            else if (strcmp(arg[iarg+1],"xor") == 0) modify_create_nucrand[rxn] = 0; // positive orientation in X
+            if (strcmp(arg[iarg+1],"no") == 0) modify_create_nucrand[rxn] = NUC_OFF; //default
+            else if (strcmp(arg[iarg+1],"yes") == 0) modify_create_nucrand[rxn] = NUC_YES; // random orientation
+            else if (strcmp(arg[iarg+1],"xor") == 0) modify_create_nucrand[rxn] = NUC_XOR; // positive orientation in X
             else if (strcmp(arg[iarg+1],"mod") == 0) {
-              // error->all(FLERR, "Command 'mod' has been deactivated.");
+              if (iarg+3 > narg) error->all(FLERR,"Illegal fix bond/react command: "
+                                            "'modify_create nuc mod' has too few arguments");
+              modify_create_nucrand[rxn] = NUC_MOD;
               if (strncmp(arg[iarg+2],"v_",2) == 0) {
                 read_variable_keyword(&arg[iarg+2][2],NUCMOD,rxn);
-                modify_create_nucrand[rxn] = compute_variable(NUCMOD,rxn);
               } else {
-                modify_create_nucrand[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
+                modify_create_nucmod[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp); // modulation in Y -- read standard deviation of normal distribution for nucleation position -- Chris 28/07/2023
+                if (modify_create_nucmod[rxn] <= 0.0)
+                  error->all(FLERR,"Fix bond/react: 'nuc mod' width must be positive");
               }
               iarg += 1;
             }
@@ -521,6 +533,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
 
             for (int excind=0; excind<num_except_types; excind++) {
               int except_type = utils::inumeric(FLERR, arg[iarg + 2 + excind], false, lmp);
+              if (except_type < 1 || except_type > atom->ntypes)
+                error->all(FLERR, "Fix bond/react: Invalid atom type {} for 'nooverlap'", except_type);
               overlapexcept[rxn][except_type] = true;
             }
             iarg += 2 + num_except_types;
@@ -540,11 +554,13 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
                   "Supply a number of special types n_types and then 2 * n_types pairs of atom_type cutoff.");
                 
                 rxn_is_overlap_typed[rxn] = true;
-                for (int itype=0; itype<atom->ntypes; itype++) type_overlapsq[rxn][itype] = overlapsq[rxn];
+                for (int itype=1; itype<=atom->ntypes; itype++) type_overlapsq[rxn][itype] = overlapsq[rxn];
 
                 for (int otind = 0; otind < num_overlap_types; otind++) {
                   int atype = utils::inumeric(FLERR, arg[iarg + 2 + (2 * otind)], false, lmp);
                   double atype_cutoff = utils::numeric(FLERR, arg[iarg + 3 + (2 * otind)], false, lmp);
+                  if (atype < 1 || atype > atom->ntypes)
+                    error->all(FLERR, "Fix bond/react: Invalid atom type {} for 'overlap types'", atype);
                   type_overlapsq[rxn][atype] = atype_cutoff;
                   type_overlapsq[rxn][atype] *= type_overlapsq[rxn][atype];
                 }
@@ -835,6 +851,7 @@ FixBondReact::~FixBondReact()
   memory->destroy(create_atoms_flag);
   memory->destroy(modify_create_fragid);
   memory->destroy(modify_create_nucrand);          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
+  memory->destroy(modify_create_nucmod);
   memory->destroy(modify_create_nuccyl_rad); // added for cylinder nucleation
   memory->destroy(modify_create_nuccyl_mod); // added for cylinder nucleation
   memory->destroy(overlapsq);
@@ -878,9 +895,16 @@ FixBondReact::~FixBondReact()
   if (id_fix2 && modify->get_fix_by_id(id_fix2)) modify->delete_fix(id_fix2);
   delete[] id_fix2;
 
-  // @FelixWodaczek/lifetime delete lifetime fix if not already deleted
-  if (id_lifetime_fix != nullptr && modify->get_fix_by_id(id_lifetime_fix)) modify->delete_fix(id_lifetime_fix);
-  if (id_hydrolysis_fix != nullptr && modify->get_fix_by_id(id_hydrolysis_fix)) modify->delete_fix(id_hydrolysis_fix);
+  // @FelixWodaczek/lifetime delete lifetime fixes if not already deleted,
+  // but only if this fix created them and no other fix that may share them is left
+  bool shared = false;
+  for (auto &ifix : modify->get_fix_list())
+    if (ifix != this && (utils::strmatch(ifix->style, "^bond/react") || utils::strmatch(ifix->style, "^nucleate")))
+      shared = true;
+  if (lifetime_owner && !shared && id_lifetime_fix != nullptr && modify->get_fix_by_id(id_lifetime_fix))
+    modify->delete_fix(id_lifetime_fix);
+  if (hydrolysis_owner && !shared && id_hydrolysis_fix != nullptr && modify->get_fix_by_id(id_hydrolysis_fix))
+    modify->delete_fix(id_hydrolysis_fix);
   delete[] id_lifetime_fix;
   delete[] id_hydrolysis_fix;
 
@@ -1003,6 +1027,7 @@ void FixBondReact::post_constructor()
   if (lifetime_flag != LIFETIME_OFF) {
     // create an atom property to store the lifetime of atoms
     if (!modify->get_fix_by_id(id_lifetime_fix)) {
+      lifetime_owner = true;
       fix_lifetime = modify->add_fix(std::string(id_lifetime_fix) +
                                      " all property/atom i_creation_steps ghost yes");
       
@@ -1017,6 +1042,7 @@ void FixBondReact::post_constructor()
       hydrolysis_random = new RanMars(lmp,hydrolysis_seed + comm->me);
       
       if (!modify->get_fix_by_id(id_hydrolysis_fix)) {
+        hydrolysis_owner = true;
         fix_hydrolysis = modify->add_fix(std::string(id_hydrolysis_fix) +
                                          " all property/atom d_hydrolysis_rn ghost yes");
 
@@ -4045,7 +4071,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   double **coords,lamda[3],rotmat[3][3];
   double *newcoord;
   double t,delx,dely,delz,rsq;
-  double nucrand_mod = modify_create_nucrand[rxnID];
+  double nucrand_mod = modify_create_nucmod[rxnID];
   double nuccyl_rad = modify_create_nuccyl_rad[rxnID];
   double nuccyl_mod = modify_create_nuccyl_mod[rxnID];
 
@@ -4137,7 +4163,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
           xmobile[fit_incr][k] = twomol->x[j][k];
           oxfrozen[fit_incr][k] = x[iatom][k];  // OG coordinates for the "frozen" target molecule (for access after random redefinition if modify_create_nucrand is used) -- Chris 20/02/2023
         }
-        if (modify_create_nucrand[rxnID] == 1) {
+        if (modify_create_nucrand[rxnID] == NUC_YES) {
           double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
           if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID]
             xfrozen[fit_incr][0] = (domain->boxhi[0] - domain->boxlo[0]) * (random[rxnID]->uniform()-0.5);
@@ -4150,7 +4176,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             xfrozen[fit_incr][2] = 0.0;
           }
         }
-        else if (modify_create_nucrand[rxnID] == 0) { // only positive X orientation! -- Chris 27/07/2023
+        else if (modify_create_nucrand[rxnID] == NUC_XOR) { // only positive X orientation! -- Chris 27/07/2023
           if (fit_incr == 0) { // random position
             for (int k = 0; k < 3; k++) {
               if (dimension == 2 && k == 2) {
@@ -4167,7 +4193,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
             xfrozen[fit_incr][2] = xfrozen[0][2];
           }
         }
-        else if (modify_create_nucrand[rxnID] > 1) {
+        else if (modify_create_nucrand[rxnID] == NUC_MOD) {
           // Sample normal distribution in Y (with standard deviation nucrand_mod) for new position -- Chris 28/07/2023
           double ang = 2*M_PI*random[rxnID]->uniform(); // random angle (from individual reaction RNG) - Chris 26/09/2023
           if (fit_incr == 0) {                          // 1st template particle, define random position :D Use individual reaction random number generator random[rxnID] - Sample normal distribution in Y (with standard deviation nucrand_mod) for new position -- Chris 28/07/2023
