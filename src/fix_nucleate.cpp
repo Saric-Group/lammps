@@ -409,12 +409,15 @@ void FixNucleate::post_integrate() {
   // add creation times for lifetime tracking
   if (lifetime_flag) add_creation_times(2*my_insertions);
 
-  // the inserted dimer is a new chain: tail (type 2) 0, head (type 3) 1
-  if (chain_index_flag) {
-    int *chain_index = atom->ivector[FixChainIndex::find_or_create_property(lmp)];
+  // the inserted dimer is a new chain: tail (type 2) 0, head (type 3) 1; without the keyword
+  // it is unlabelled (-1) rather than keeping the index of the ghost atom of its slot
+  int ci_flag, ci_cols;
+  const int chain_index_property = atom->find_custom("chain_index", ci_flag, ci_cols);
+  if (chain_index_property >= 0) {
+    int *chain_index = atom->ivector[chain_index_property];
     for (int iinsert = 0; iinsert < my_insertions; iinsert++) {
-      chain_index[nlocal_prev + 2 * iinsert] = 0;
-      chain_index[nlocal_prev + 2 * iinsert + 1] = 1;
+      chain_index[nlocal_prev + 2 * iinsert] = chain_index_flag ? 0 : -1;
+      chain_index[nlocal_prev + 2 * iinsert + 1] = chain_index_flag ? 1 : -1;
     }
   }
 

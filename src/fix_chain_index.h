@@ -36,6 +36,7 @@ class FixChainIndex : public Fix {
   void pre_force(int) override;
   void min_pre_force(int) override;
   double compute_vector(int) override;
+  void set_arrays(int) override;
 
   int pack_forward_comm(int, int *, double *, int, int *) override;
   void unpack_forward_comm(int, int, double *) override;

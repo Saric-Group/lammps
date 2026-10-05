@@ -309,6 +309,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   chain_cuff = -1;
   chain_index_property = -1;
   chain_values = nullptr;
+  chain_grow_warned = 0;
 
   rescale_charges_anyflag = 0;
   for (int i = 0; i < nreacts; i++) {
@@ -1121,10 +1122,12 @@ void FixBondReact::post_constructor()
 
 void FixBondReact::init()
 {
-  if (chain_index_anyflag) {
+  // @FelixWodaczek/chain-index also without the keyword, created atoms must not keep the
+  // chain index of the ghost atom that used their slot before
+  {
     int flag, cols;
     chain_index_property = atom->find_custom("chain_index", flag, cols);
-    if (chain_index_property < 0 || flag != 0 || cols != 0)
+    if (chain_index_anyflag && (chain_index_property < 0 || flag != 0 || cols != 0))
       error->all(FLERR,"Fix bond/react: per-atom integer property i_chain_index is missing");
   }
 
@@ -3582,7 +3585,7 @@ void FixBondReact::update_everything()
         atom->v[n][2] = myaddatom.v[2];
         if (atom->rmass) atom->rmass[n]= myaddatom.rmass;
         modify->create_attribute(n);
-        if (chain_index_anyflag) atom->ivector[chain_index_property][n] = myaddatom.chain_index;
+        if (chain_index_property >= 0) atom->ivector[chain_index_property][n] = myaddatom.chain_index;
       }
 
       // @FelixWodaczek/lifetime now update lifetimes
@@ -4523,11 +4526,16 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         // @FelixWodaczek/chain-index
         myaddatom.chain_index = -1;
         if (chain_mode[rxnID] == CHAIN_GROW) {
-          if (chain_values[iupdate] < 0)
-            error->one(FLERR,"Fix bond/react: 'chain_index grow' of reaction {} found no template atom "
-                       "with a chain index >= 0; label existing filaments with fix chain/index",
-                       rxn_name[rxnID]);
-          myaddatom.chain_index = (int) chain_values[iupdate] + 1;
+          if (chain_values[iupdate] >= 0) {
+            myaddatom.chain_index = (int) chain_values[iupdate] + 1;
+          } else if (!chain_grow_warned) {
+            // unlabelled filament (e.g. malformed, or no fix chain/index): the new atom stays -1
+            chain_grow_warned = 1;
+            if (comm->me == 0)
+              error->warning(FLERR,"Fix bond/react: 'chain_index grow' of reaction {} found no template "
+                           "atom with a chain index >= 0, created atoms get -1; label filaments with "
+                           "fix chain/index",rxn_name[rxnID]);
+          }
         } else if (chain_mode[rxnID] == CHAIN_NUCLEATE) {
           myaddatom.chain_index = chain_nucleate_values[rxnID][add_count-1];
         }

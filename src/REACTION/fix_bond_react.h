@@ -79,6 +79,7 @@ class FixBondReact : public Fix {
   int chain_cuff;                                    // mega_glove row that carries the chain index value
   int chain_index_property;                          // index of i_chain_index in atom->ivector
   double *chain_values;                              // chain index value of each reaction in update_everything()
+  int chain_grow_warned;                             // warned about growth of an unlabelled chain
   int custom_exclude_flag;
   int **rate_limit;
   int **store_rxn_count;

@@ -140,6 +140,8 @@ FixChainIndex::FixChainIndex(LAMMPS *lmp, int narg, char **arg) :
   global_freq = 1;    // values of the last relabelling
   dynamic_group_allow = 1;
   comm_forward = 1;
+  // atoms created by other commands (create_atoms, deposit, ...) start unlabelled
+  create_attribute = 1;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -161,11 +163,13 @@ FixChainIndex::~FixChainIndex()
 
 int FixChainIndex::find_or_create_property(LAMMPS *lmp)
 {
-  int flag, cols;
-  int index = lmp->atom->find_custom("chain_index", flag, cols);
+  int flag, cols, ghost;
+  int index = lmp->atom->find_custom_ghost("chain_index", flag, cols, ghost);
   if (index >= 0) {
     if (flag != 0 || cols != 0)
       lmp->error->all(FLERR, "Per-atom property chain_index must be an integer vector (i_chain_index)");
+    if (!ghost)
+      lmp->error->all(FLERR, "Per-atom property i_chain_index must be defined with ghost yes");
     return index;
   }
   Fix *property =
@@ -366,6 +370,16 @@ void FixChainIndex::relabel()
                    "Fix chain/index at step {}: {} chains without a head, {} branched chains, {} "
                    "backbone atoms not reachable from a tail (indices set to -1)",
                    update->ntimestep, no_head, branched, unreached);
+}
+
+/* ----------------------------------------------------------------------
+   new atoms are stored in slots that may have held ghost atoms: reset them
+------------------------------------------------------------------------- */
+
+void FixChainIndex::set_arrays(int i)
+{
+  int flag, cols;
+  atom->ivector[atom->find_custom("chain_index", flag, cols)][i] = -1;
 }
 
 /* ----------------------------------------------------------------------
