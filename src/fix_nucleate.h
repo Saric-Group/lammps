@@ -45,6 +45,7 @@ class FixNucleate : public Fix {
     double insert_sigma; // bond length of inserted dimer
     int bond_type; // bond type of inserted dimer
     int noffset; // run at timestep + noffset to avoid clashes with eg. bond/react
+    int chain_index_flag; // @FelixWodaczek/chain-index set i_chain_index of inserted dimers to 0 (tail) and 1 (head)
 
     // lifetime tracking flags and variables
     // makes two atom/property fixes and keeps track of them

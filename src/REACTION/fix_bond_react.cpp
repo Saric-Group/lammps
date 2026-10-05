@@ -25,6 +25,7 @@ Contributing Author: Jacob Gissinger (jgissing@stevens.edu)
 #include "domain.h"
 #include "error.h"
 #include "fix_bond_history.h"
+#include "fix_chain_index.h"
 #include "force.h"
 #include "group.h"
 #include "input.h"
@@ -120,6 +121,9 @@ enum { NUC_OFF = -1, NUC_XOR = 0, NUC_YES = 1, NUC_MOD = 2 };
 
 // values for lifetime_flag
 enum { LIFETIME_OFF, LIFETIME_ON, LIFETIME_HYDROLYSIS };
+
+// @FelixWodaczek/chain-index how a reaction updates i_chain_index
+enum { CHAIN_NONE, CHAIN_GROW, CHAIN_SHRINK, CHAIN_NUCLEATE };
 
 /* ---------------------------------------------------------------------- */
 // clang-format off
@@ -299,6 +303,12 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(local_rxn_count,nreacts,"bond/react:local_rxn_count");
   memory->create(ghostly_rxn_count,nreacts,"bond/react:ghostly_rxn_count");
   memory->create(reaction_count_total,nreacts,"bond/react:reaction_count_total");
+  memory->create(chain_mode,nreacts,"bond/react:chain_mode"); // @FelixWodaczek/chain-index
+  chain_nucleate_values.resize(nreacts);
+  chain_index_anyflag = 0;
+  chain_cuff = -1;
+  chain_index_property = -1;
+  chain_values = nullptr;
 
   rescale_charges_anyflag = 0;
   for (int i = 0; i < nreacts; i++) {
@@ -325,6 +335,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     local_rxn_count[i] = 0;
     ghostly_rxn_count[i] = 0;
     reaction_count_total[i] = 0;
+    chain_mode[i] = CHAIN_NONE;
     for (int j = 0; j < NUMVARVALS; j++) {
       var_flag[j][i] = 0;
       var_id[j][i] = 0;
@@ -435,6 +446,25 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
         limit_duration[rxn] = utils::inumeric(FLERR,arg[iarg+1],false,lmp);
         stabilize_steps_flag[rxn] = 1;
         iarg += 2;
+      } else if (strcmp(arg[iarg],"chain_index") == 0) {
+        // @FelixWodaczek/chain-index chain_index none|grow|shrink|nucleate [v1 v2 ...]
+        if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
+                                      "'chain_index' has too few arguments");
+        if (strcmp(arg[iarg+1],"none") == 0) chain_mode[rxn] = CHAIN_NONE;
+        else if (strcmp(arg[iarg+1],"grow") == 0) chain_mode[rxn] = CHAIN_GROW;
+        else if (strcmp(arg[iarg+1],"shrink") == 0) chain_mode[rxn] = CHAIN_SHRINK;
+        else if (strcmp(arg[iarg+1],"nucleate") == 0) chain_mode[rxn] = CHAIN_NUCLEATE;
+        else error->all(FLERR,"Fix bond/react: Illegal option for 'chain_index' keyword: {}",arg[iarg+1]);
+        iarg += 2;
+        if (chain_mode[rxn] == CHAIN_NUCLEATE) {
+          while (iarg < narg && utils::is_integer(arg[iarg])) {
+            int value = utils::inumeric(FLERR,arg[iarg],false,lmp);
+            if (value < 0) error->all(FLERR,"Fix bond/react: 'chain_index nucleate' values must be >= 0");
+            chain_nucleate_values[rxn].push_back(value);
+            iarg++;
+          }
+        }
+        if (chain_mode[rxn] != CHAIN_NONE) chain_index_anyflag = 1;
       } else if (strcmp(arg[iarg],"custom_charges") == 0) {
         if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                       "'custom_charges' has too few arguments");
@@ -578,6 +608,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     }
   }
 
+  // @FelixWodaczek/chain-index the chain index value travels as an extra mega_glove row
+  if (chain_index_anyflag) chain_cuff = cuff++;
+
   max_natoms = 0; // the number of atoms in largest molecule template
   max_rate_limit_steps = 0;
   for (int myrxn = 0; myrxn < nreacts; myrxn++) {
@@ -674,6 +707,29 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     jatomtype[i] = onemol->type[jbonding[i]-1];
     find_landlocked_atoms(i);
     if (custom_charges_fragid[i] >= 0) CustomCharges(custom_charges_fragid[i],i);
+  }
+
+  // @FelixWodaczek/chain-index created atoms of 'chain_index grow|nucleate' reactions
+  for (int myrxn = 0; myrxn < nreacts; myrxn++) {
+    if (chain_mode[myrxn] == CHAIN_NONE || chain_mode[myrxn] == CHAIN_SHRINK) continue;
+    twomol = atom->molecules[reacted_mol[myrxn]];
+    int ncreated = 0;
+    for (int m = 0; m < twomol->natoms; m++) ncreated += create_atoms[m][myrxn];
+    if (ncreated == 0)
+      error->all(FLERR,"Fix bond/react: 'chain_index grow|nucleate' of reaction {} needs created atoms",
+                 rxn_name[myrxn]);
+    if (chain_mode[myrxn] == CHAIN_NUCLEATE) {
+      auto &values = chain_nucleate_values[myrxn];
+      if (values.empty()) {
+        if (ncreated != 2)
+          error->all(FLERR,"Fix bond/react: 'chain_index nucleate' of reaction {} creates {} atoms, "
+                     "give one chain index per created atom",rxn_name[myrxn],ncreated);
+        values = {0, 1};
+      }
+      if ((int) values.size() != ncreated)
+        error->all(FLERR,"Fix bond/react: 'chain_index nucleate' of reaction {} has {} values for {} "
+                   "created atoms",rxn_name[myrxn],values.size(),ncreated);
+    }
   }
 
   // charge rescaling values must be calculated after calling CustomCharges
@@ -859,6 +915,7 @@ FixBondReact::~FixBondReact()
   memory->destroy(rxn_is_overlap_typed);
   memory->destroy(type_overlapsq);
   memory->destroy(ignore_own_molecule);
+  memory->destroy(chain_mode); // @FelixWodaczek/chain-index
 
   memory->destroy(iatomtype);
   memory->destroy(jatomtype);
@@ -942,6 +999,9 @@ it will have the name 'i_limit_tags' and will be intitialized to 0 (not in group
 
 void FixBondReact::post_constructor()
 {
+  // @FelixWodaczek/chain-index per-atom chain index, shared with fix chain/index and fix nucleate
+  if (chain_index_anyflag) chain_index_property = FixChainIndex::find_or_create_property(lmp);
+
   // let's add the limit_tags per-atom property fix
   id_fix2 = utils::strdup("bond_react_props_internal");
   if (!modify->get_fix_by_id(id_fix2))
@@ -1061,6 +1121,13 @@ void FixBondReact::post_constructor()
 
 void FixBondReact::init()
 {
+  if (chain_index_anyflag) {
+    int flag, cols;
+    chain_index_property = atom->find_custom("chain_index", flag, cols);
+    if (chain_index_property < 0 || flag != 0 || cols != 0)
+      error->all(FLERR,"Fix bond/react: per-atom integer property i_chain_index is missing");
+  }
+
 
   // Variable IDs can change when variables are deleted and recreated.
   for (int keyword = 0; keyword < NUMVARVALS; keyword++) {
@@ -1599,6 +1666,7 @@ void FixBondReact::superimpose_algorithm()
             status = ACCEPT;
             my_mega_glove[0][my_num_mega] = (double) rxnID;
             if (rescale_charges_flag[rxnID]) my_mega_glove[1][my_num_mega] = get_totalcharge();
+            if (chain_index_anyflag) my_mega_glove[chain_cuff][my_num_mega] = get_chain_value(rxnID);
             for (int i = 0; i < onemol->natoms; i++) {
               my_mega_glove[i+cuff][my_num_mega] = (double) glove[i][1];
             }
@@ -1648,6 +1716,7 @@ void FixBondReact::superimpose_algorithm()
           else {
             my_mega_glove[0][my_num_mega] = (double) rxnID;
             if (rescale_charges_flag[rxnID]) my_mega_glove[1][my_num_mega] = get_totalcharge();
+            if (chain_index_anyflag) my_mega_glove[chain_cuff][my_num_mega] = get_chain_value(rxnID);
             for (int i = 0; i < onemol->natoms; i++) {
               my_mega_glove[i+cuff][my_num_mega] = (double) glove[i][1];
             }
@@ -2466,6 +2535,34 @@ double FixBondReact::get_totalcharge()
       sim_total_charge += q[atom->map(glove[jj][1])];
   }
   return sim_total_charge;
+}
+
+/* ----------------------------------------------------------------------
+@FelixWodaczek/chain-index chain index value of the current match (glove):
+grow: largest index >= 0 of the template atoms, shrink: smallest index > 0
+of the template atoms that are not deleted, -1 if there is none
+------------------------------------------------------------------------- */
+
+double FixBondReact::get_chain_value(int myrxn)
+{
+  const int mode = chain_mode[myrxn];
+  if (mode != CHAIN_GROW && mode != CHAIN_SHRINK) return -1.0;
+
+  int *chain_index = atom->ivector[chain_index_property];
+  int value = -1;
+  for (int i = 0; i < onemol->natoms; i++) {
+    if (mode == CHAIN_SHRINK && delete_atoms[i][myrxn]) continue;
+    int ilocal = atom->map(glove[i][1]);
+    if (ilocal < 0) error->one(FLERR,"Fix bond/react: chain_index of template atom {} not available",
+                               glove[i][1]);
+    const int c = chain_index[ilocal];
+    if (mode == CHAIN_GROW) {
+      if (c > value) value = c;
+    } else if (c > 0 && (value < 0 || c < value)) {
+      value = c;
+    }
+  }
+  return (double) value;
 }
 
 /* ----------------------------------------------------------------------
@@ -3325,6 +3422,7 @@ void FixBondReact::update_everything()
 
   double *sim_total_charges;
   if (rescale_charges_anyflag) memory->create(sim_total_charges,maxmega,"bond/react:sim_total_charges");
+  if (chain_index_anyflag) memory->create(chain_values,maxmega,"bond/react:chain_values");
 
   for (int pass = 0; pass < 2; pass++) {
     update_num_mega = 0;
@@ -3341,6 +3439,7 @@ void FixBondReact::update_everything()
         update_mega_glove[0][update_num_mega] = (tagint) local_mega_glove[0][i];
         for (int j = 0; j < max_natoms; j++)
           update_mega_glove[j+1][update_num_mega] = (tagint) local_mega_glove[j+cuff][i];
+        if (chain_index_anyflag) chain_values[update_num_mega] = local_mega_glove[chain_cuff][i];
 
         // atoms inserted here for serial MPI_STUBS build only
         if (create_atoms_flag[rxnID] == 1) {
@@ -3366,6 +3465,7 @@ void FixBondReact::update_everything()
         update_mega_glove[0][update_num_mega] = (tagint) global_mega_glove[0][i];
         for (int j = 0; j < max_natoms; j++)
           update_mega_glove[j+1][update_num_mega] = (tagint) global_mega_glove[j+cuff][i];
+        if (chain_index_anyflag) chain_values[update_num_mega] = global_mega_glove[chain_cuff][i];
 
         // we can insert atoms here, now that reactions are finalized
         // can't do it any earlier, due to skipped reactions (max_rxn)
@@ -3482,6 +3582,7 @@ void FixBondReact::update_everything()
         atom->v[n][2] = myaddatom.v[2];
         if (atom->rmass) atom->rmass[n]= myaddatom.rmass;
         modify->create_attribute(n);
+        if (chain_index_anyflag) atom->ivector[chain_index_property][n] = myaddatom.chain_index;
       }
 
       // @FelixWodaczek/lifetime now update lifetimes
@@ -3550,6 +3651,11 @@ void FixBondReact::update_everything()
 
           if (landlocked_atoms[j][rxnID] == 1)
             type[ilocal] = twomol->type[j];
+          // @FelixWodaczek/chain-index the surviving atoms with the smallest index become the new tail
+          if (chain_mode[rxnID] == CHAIN_SHRINK && chain_values[i] > 0 && delete_atoms[jj][rxnID] == 0) {
+            int *chain_index = atom->ivector[chain_index_property];
+            if (chain_index[ilocal] == (int) chain_values[i]) chain_index[ilocal] = 0;
+          }
           if (twomol->qflag && atom->q_flag && custom_charges[jj][rxnID] == 1) {
             double *q = atom->q;
             q[ilocal] = twomol->q[j]+charge_rescale_addend;
@@ -3978,6 +4084,7 @@ void FixBondReact::update_everything()
 
   memory->destroy(update_mega_glove);
   if (rescale_charges_anyflag) memory->destroy(sim_total_charges);
+  if (chain_index_anyflag) memory->destroy(chain_values);
 
   // delete atoms. taken from fix_evaporate. but don't think it needs to be in pre_exchange
   // loop in reverse order to avoid copying marked atoms
@@ -4413,6 +4520,17 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         root = comm->me;
 
         myaddatom.type = twomol->type[m];
+        // @FelixWodaczek/chain-index
+        myaddatom.chain_index = -1;
+        if (chain_mode[rxnID] == CHAIN_GROW) {
+          if (chain_values[iupdate] < 0)
+            error->one(FLERR,"Fix bond/react: 'chain_index grow' of reaction {} found no template atom "
+                       "with a chain index >= 0; label existing filaments with fix chain/index",
+                       rxn_name[rxnID]);
+          myaddatom.chain_index = (int) chain_values[iupdate] + 1;
+        } else if (chain_mode[rxnID] == CHAIN_NUCLEATE) {
+          myaddatom.chain_index = chain_nucleate_values[rxnID][add_count-1];
+        }
         myaddatom.x[0] = coords[m][0];
         myaddatom.x[1] = coords[m][1];
         myaddatom.x[2] = coords[m][2];

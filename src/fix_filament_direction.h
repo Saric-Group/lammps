@@ -50,7 +50,7 @@ class FixFilamentDirection : public Fix {
   void *extract(const char *, int &) override;
 
  protected:
-  enum { BOND_ORDER };
+  enum { BOND_ORDER, CHAIN_INDEX };
   enum { COMM_DIRECTION, COMM_ALIGNMENT };
 
   int nevery;
@@ -70,6 +70,7 @@ class FixFilamentDirection : public Fix {
   double *cosmin;
 
   int commflag;
+  int *chain_index;    // orient chain_index: per-atom chain index of local and ghost atoms
   class NeighList *list;
 
   void find_properties();

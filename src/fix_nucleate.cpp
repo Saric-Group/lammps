@@ -18,6 +18,7 @@
 #include "update.h"
 
 #include <set>
+#include "fix_chain_index.h"
 #include <cstring>
 
 using namespace LAMMPS_NS;
@@ -48,6 +49,7 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
   lifetime_owner = false; // lifetime tracking
   hydrolysis_owner = false; // lifetime tracking
   lifetime_flag = LIFETIME_OFF; // lifetime tracking
+  chain_index_flag = 0; // chain index of inserted dimers
 
   // parse kwargs
   while (iarg < narg) {
@@ -106,6 +108,11 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
         lifetime_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
       }
       iarg += 2;
+    } else if (strcmp(arg[iarg], "chain_index") == 0) {
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix nucleate command: "
+                                    "'chain_index' keyword has too few arguments");
+      chain_index_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
+      iarg += 2;
     } else {
       error->all(FLERR, "Illegal fix nucleate command.");
     }
@@ -137,6 +144,9 @@ FixNucleate::~FixNucleate() {
 
 void FixNucleate::post_constructor() {
   random = new RanMars(lmp, seed + comm->me);
+
+  // per-atom chain index, shared with fix chain/index and fix bond/react
+  if (chain_index_flag) FixChainIndex::find_or_create_property(lmp);
 
   if (lifetime_flag) {
     // create an atom property to store the lifetime of atoms
@@ -398,6 +408,15 @@ void FixNucleate::post_integrate() {
 
   // add creation times for lifetime tracking
   if (lifetime_flag) add_creation_times(2*my_insertions);
+
+  // the inserted dimer is a new chain: tail (type 2) 0, head (type 3) 1
+  if (chain_index_flag) {
+    int *chain_index = atom->ivector[FixChainIndex::find_or_create_property(lmp)];
+    for (int iinsert = 0; iinsert < my_insertions; iinsert++) {
+      chain_index[nlocal_prev + 2 * iinsert] = 0;
+      chain_index[nlocal_prev + 2 * iinsert + 1] = 1;
+    }
+  }
 
   // send around how many insertions each proc made
   MPI_Scan(&my_insertions, &global_insertions, 1, MPI_INT, MPI_SUM, world);
