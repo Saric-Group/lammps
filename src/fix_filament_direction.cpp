@@ -219,6 +219,8 @@ int FixFilamentDirection::setmask()
 
 void FixFilamentDirection::init()
 {
+  // the bond list is only built with a bond style
+  if (!force->bond) error->all(FLERR, "Fix filament/direction requires a bond style");
   if (orient == BOND_ORDER && !force->newton_bond)
     error->all(FLERR,
                "Fix filament/direction with orient bond_order requires newton_bond on: "
