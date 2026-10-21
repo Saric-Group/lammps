@@ -19,6 +19,7 @@ Contributing Author: Jacob Gissinger (jgissing@stevens.edu)
 
 #include "atom.h"
 #include "atom_vec.h"
+#include "bond.h"
 #include "citeme.h"
 #include "comm.h"
 #include "compute.h"
@@ -89,7 +90,7 @@ static constexpr double BIG = 1.0e20;
 static constexpr int DELTA = 16;
 static constexpr int MAXGUESS = 20;      // max # of guesses allowed by superimpose algorithm
 static constexpr int MAXCONARGS = 14;    // max # of arguments for any type of constraint + rxnID
-static constexpr int NUMVARVALS = 6;     // max # of keyword values that have variables as input
+static constexpr int NUMVARVALS = 7;     // max # of keyword values that have variables as input
 
 // various statuses of superimpose algorithm:
 // ACCEPT: site successfully matched to pre-reacted template
@@ -107,7 +108,7 @@ enum { DISTANCE, ANGLE, DIHEDRAL, ARRHENIUS, RMSD, CUSTOM };
 enum { ATOM, FRAG };
 
 // keyword values that accept variables as input
-enum { NEVERY, RMIN, RMAX, PROB, NRATE, ENERGY_TEMP };
+enum { NEVERY, RMIN, RMAX, PROB, NRATE, ENERGY_TEMP, ENERGY_BIAS };
 
 // flag for one-proc vs shared reaction sites
 enum { LOCAL, GLOBAL };
@@ -119,7 +120,6 @@ enum { OFF, INTER, INTRA };
 enum { LIFETIME_OFF, LIFETIME_ON, LIFETIME_HYDROLYSIS };
 
 // values for the overlap check mode
-enum { OVERLAP_OFF, OVERLAP_DISTANCE, OVERLAP_SCALE };
 
 /* ---------------------------------------------------------------------- */
 // clang-format off
@@ -272,12 +272,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   memory->create(modify_create_nucrand,nreacts,"bond/react:modify_create_nucrand");          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
   memory->create(modify_create_nuccyl_rad,nreacts,"bond/react:modify_create_nuccyl_rad"); // added for cylinder nucleation
   memory->create(modify_create_nuccyl_mod,nreacts,"bond/react:modify_create_nuccyl_mod"); // added for cylinder nucleation
-  memory->create(overlapsq,nreacts,"bond/react:overlapsq");
-  memory->create(overlap_factor,nreacts,"bond/react:overlap_factor");
-  memory->create(overlap_mode,nreacts,"bond/react:overlap_mode");
+  insert_check.assign(nreacts, {INSERT_CHECK_NONE, 0.0, 0.0, 0.0, 0.0});
   memory->create(molecule_keyword,nreacts,"bond/react:molecule_keyword");
-  memory->create(energy_check_flag, nreacts, "bond/react:energy_check_flag");  // @andraz-gnidovec: flag for energy check keyword
-  memory->create(energy_temp, nreacts, "bond/react:energy_temp");
   memory->create(nconstraints,nreacts,"bond/react:nconstraints");
   memory->create(constraintstr,nreacts,MAXLINE,"bond/react:constraintstr");
   memory->create(var_flag,NUMVARVALS,nreacts,"bond/react:var_flag");
@@ -308,12 +304,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     modify_create_nucrand[i] = -1;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
     modify_create_nuccyl_rad[i] = -1; // added for cylinder nucleation
     modify_create_nuccyl_mod[i] = -1; // added for cylinder nucleation
-    overlapsq[i] = 0.0;
-    overlap_factor[i] = 0.0;
-    overlap_mode[i] = OVERLAP_OFF;
     molecule_keyword[i] = OFF;
-    energy_check_flag[i] = 0;   // Default to off
-    energy_temp[i] = 0.0;
     nconstraints[i] = 0;
     // set default limit duration to 60 timesteps
     limit_duration[i] = 60;
@@ -476,15 +467,25 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
           } else if (strcmp(arg[iarg],"energy_check") == 0) {
             if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                           "'energy_check' has too few arguments");
-            energy_check_flag[rxn] = 1;
+            set_insert_check_style(rxn, INSERT_CHECK_ENERGY, "energy_check");
             if (strncmp(arg[iarg+1],"v_",2) == 0) {
               read_variable_keyword(&arg[iarg+1][2], ENERGY_TEMP, rxn);
             } else {
-              energy_temp[rxn] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
-              if (energy_temp[rxn] < 0.0)
+              insert_check[rxn].energy_temp = utils::numeric(FLERR,arg[iarg+1],false,lmp);
+              if (insert_check[rxn].energy_temp < 0.0)
                 error->all(FLERR,"Temperature for energy_check keyword cannot be negative");
             }
             iarg += 2;
+            // optional: energy bias, insertions with E <= Ebias are always accepted
+            if (iarg < narg && strcmp(arg[iarg],"bias") == 0) {
+              if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
+                                            "'energy_check bias' has too few arguments");
+              if (strncmp(arg[iarg+1],"v_",2) == 0)
+                read_variable_keyword(&arg[iarg+1][2], ENERGY_BIAS, rxn);
+              else
+                insert_check[rxn].energy_bias = utils::numeric(FLERR,arg[iarg+1],false,lmp);
+              iarg += 2;
+            }
           
           } else if (strcmp(arg[iarg],"nuc") == 0) {                                                // Adding a flag "nuc" to nucleate the new dimer in a random position within the box, independent of the position of the nucleator - Chris 22/02/2023
             if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
@@ -515,14 +516,14 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
                                           "'modify_create' has too few arguments");
             if (strcmp(arg[iarg+1], "scale") == 0) {
               // radius based method
-              overlap_mode[rxn] = OVERLAP_SCALE;
+              set_insert_check_style(rxn, INSERT_CHECK_OVERLAP_SCALE, "overlap");
               
               if (!atom->radius)
                 error->all(FLERR,"The 'overlap scale' option requires atom_style sphere");
               if (iarg+3 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                             "'overlap scale' is missing a factor argument");
 
-              overlap_factor[rxn] = utils::numeric(FLERR,arg[iarg+2],false,lmp);
+              insert_check[rxn].overlap_factor = utils::numeric(FLERR,arg[iarg+2],false,lmp);
               
               // if (!atom->molecules[reacted_mol[rxn]]->radiusflag)
               //   error->all(FLERR,"Molecule template for reaction must have a 'Diameters' section when using 'overlap scale'");
@@ -530,9 +531,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
               iarg += 3; // Advance past "overlap", "scale", and <factor>
 
             } else {
-              overlap_mode[rxn] = OVERLAP_DISTANCE;
-              overlapsq[rxn] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
-              overlapsq[rxn] *= overlapsq[rxn];
+              set_insert_check_style(rxn, INSERT_CHECK_OVERLAP, "overlap");
+              double overlap = utils::numeric(FLERR,arg[iarg+1],false,lmp);
+              insert_check[rxn].overlapsq = overlap*overlap;
               iarg += 2;
             }
           } else break;
@@ -813,11 +814,6 @@ FixBondReact::~FixBondReact()
   memory->destroy(modify_create_nucrand);          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
   memory->destroy(modify_create_nuccyl_rad); // added for cylinder nucleation
   memory->destroy(modify_create_nuccyl_mod); // added for cylinder nucleation
-  memory->destroy(overlapsq);
-  memory->destroy(overlap_factor);
-  memory->destroy(overlap_mode);
-  memory->destroy(energy_check_flag);
-  memory->destroy(energy_temp);
 
   memory->destroy(iatomtype);
   memory->destroy(jatomtype);
@@ -4046,7 +4042,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   imageint *imageflags;
   double **coords,lamda[3],rotmat[3][3];
   double *newcoord;
-  double t,delx,dely,delz,rsq;
+  double t;
   int molinit;
 
   double **x = atom->x;
@@ -4268,161 +4264,9 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
     }
   }
 
-  //@andraz-gnidovec: added new insertion logic that takes into account energy of the inserted particles (if energy_check_flag is set)
-  int abortflag = 0;
-  bool overlap_failed = false;
-
-  // if enabled, first perform overlap check 
-if (overlap_mode[rxnID] != OVERLAP_OFF) {
-    // Loop over each potential new atom defined in the template
-    for (int m = 0; m < twomol->natoms; m++) {
-      if (create_atoms[m][rxnID] == 1) {
-
-        // determine new atom radius (not used for basic overlap mode)
-        double new_atom_radius = 0.5;  // default radius
-        if (atom->molecules[reacted_mol[rxnID]]->radiusflag) {
-          new_atom_radius = atom->molecules[reacted_mol[rxnID]]->radius[m];
-        }
-
-        // check against all existing local and ghost atoms
-        for (int i = 0; i < atom->nlocal + atom->nghost; i++) {
-          double cutoff_sq;
-          if (overlap_mode[rxnID] == OVERLAP_SCALE) {
-            // New radius-based method
-            double existing_atom_radius = atom->radius[i];
-            double cutoff_dist = (new_atom_radius + existing_atom_radius) * overlap_factor[rxnID];
-            cutoff_sq = cutoff_dist * cutoff_dist;
-          } else {
-            // Old fixed-distance method
-            cutoff_sq = overlapsq[rxnID];
-          }
-
-          delx = coords[m][0] - x[i][0];
-          dely = coords[m][1] - x[i][1];
-          delz = coords[m][2] - x[i][2];
-          domain->minimum_image(FLERR, delx,dely,delz);
-          rsq = delx*delx + dely*dely + delz*delz;
-          if (rsq < cutoff_sq) {
-            overlap_failed = true;
-            break;
-          }
-        }
-        if (overlap_failed) break;
-
-        // also check against previous to-be-added atoms
-        for (auto const& myaddatom : addatoms) {
-            double cutoff_sq;
-            if (overlap_mode[rxnID] == OVERLAP_SCALE) {
-              // New radius-based method
-              double pending_radius = myaddatom.radius;
-              double cutoff_dist = (new_atom_radius + pending_radius) * overlap_factor[rxnID];
-              cutoff_sq = cutoff_dist * cutoff_dist;
-            } else {
-              // Old fixed-distance method
-              cutoff_sq = overlapsq[rxnID];
-            }
-            
-            delx = coords[m][0] - myaddatom.x[0];
-            dely = coords[m][1] - myaddatom.x[1];
-            delz = coords[m][2] - myaddatom.x[2];
-            domain->minimum_image(FLERR, delx,dely,delz);
-            rsq = delx*delx + dely*dely + delz*delz;
-            if (rsq < cutoff_sq) {
-                overlap_failed = true;
-                break;
-            }
-        }
-
-        if (overlap_failed) break;
-      }
-    }
-  }
-
-  // decide whether to abort, perform Metropolis check, or accept
-  // energy calculation is required if overlap failed and an energy check is available to rescue it
-  // or if overlap check is disabled but energy check is enabled
-  if ((overlap_failed && energy_check_flag[rxnID]) || (overlap_mode[rxnID] == OVERLAP_OFF && energy_check_flag[rxnID])) {
-      double fforce;  // dummy variable required by force signature
-      double E_new_vs_old = 0.0, E_new_vs_new = 0.0;
-      
-      // calculate E_new_vs_old
-      for (int m = 0; m < twomol->natoms; m++) {
-        if (create_atoms[m][rxnID] == 1) {
-          int new_type = twomol->type[m];
-          for (int i = 0; i < atom->nlocal + atom->nghost; i++) {
-            delx = coords[m][0] - x[i][0];
-            dely = coords[m][1] - x[i][1];
-            delz = coords[m][2] - x[i][2];
-            domain->minimum_image(FLERR, delx,dely,delz);
-            rsq = delx*delx + dely*dely + delz*delz;
-            int existing_type = atom->type[i];
-            if (rsq < force->pair->cutsq[new_type][existing_type]) {
-              if (force->pair->orientation_flag) {
-                E_new_vs_old += force->pair->single_orientation(new_type, atom->type[i], rsq, 1.0, rotated_mus[m], atom->mu[i]);
-            } else {
-                double fforce;
-                E_new_vs_old += force->pair->single(0, 0, new_type, atom->type[i], rsq, 1.0, 1.0, fforce);
-            }
-            }
-          }
-        }
-      }
-
-      // calculate E_new_vs_new
-      for (int m = 0; m < twomol->natoms; m++) {
-        if (create_atoms[m][rxnID] == 1) {
-          for (int m2 = m + 1; m2 < twomol->natoms; m2++) {
-            if (create_atoms[m2][rxnID] == 1) {
-              delx = coords[m][0] - coords[m2][0];
-              dely = coords[m][1] - coords[m2][1];
-              delz = coords[m][2] - coords[m2][2];
-              domain->minimum_image(FLERR, delx,dely,delz);
-              rsq = delx*delx + dely*dely + delz*delz;
-              int type1 = twomol->type[m];
-              int type2 = twomol->type[m2];
-              if (rsq < force->pair->cutsq[type1][type2]) {
-                if (force->pair->orientation_flag) {
-                  E_new_vs_new += force->pair->single_orientation(twomol->type[m], twomol->type[m2], rsq, 1.0, rotated_mus[m], rotated_mus[m2]);
-              } else {
-                  double fforce;
-                  E_new_vs_new += force->pair->single(0, 0, twomol->type[m], twomol->type[m2], rsq, 1.0, 1.0, fforce);
-              }
-              }
-            }
-          }
-        }
-      }
-
-      double total_insertion_energy = E_new_vs_old + E_new_vs_new;
-
-      // apply Metropolis acceptance criterion
-      double temp;
-      if (var_flag[ENERGY_TEMP][rxnID]) {
-        temp = input->variable->compute_equal(var_id[ENERGY_TEMP][rxnID]);
-      } else {
-        temp = energy_temp[rxnID];
-      }
-
-      if (total_insertion_energy > 0.0) {
-        if (temp <= 0.0) { // at T=0, only accept energetically favorable moves
-          abortflag = 1;
-        } else {
-          double prob = exp(-total_insertion_energy / (force->boltz * temp));
-          if (random[rxnID]->uniform() > prob) {
-            abortflag = 1; // probabilistic rejection
-          }
-        }
-      }
-      // if total_insertion_energy <= 0.0, it is always accepted (abortflag remains 0)
-
-  } else if (overlap_failed) {
-    // overlap failed, and no energy-based rescue is available, so we abort
-    abortflag = 1;
-  }
-  
-  // final decision to abort or proceed
-  MPI_Allreduce(MPI_IN_PLACE, &abortflag, 1, MPI_INT, MPI_MAX, world);
-  if (abortflag) {
+  // @andraz-gnidovec: decide whether to insert the created atoms, based on the insertion check
+  InsertSite site = {coords, rotated_mus, fitroot, my_update_mega_glove, iupdate};
+  if (insert_check_reject(site)) {
       memory->destroy(coords);
       memory->destroy(imageflags);
       memory->destroy(rotated_mus);
@@ -4516,7 +4360,7 @@ if (overlap_mode[rxnID] != OVERLAP_OFF) {
         if (twomol->radiusflag) {
             myaddatom.radius = twomol->radius[m];
         } else {
-            myaddatom.radius = 0.5;  // default radius, won't be used unless overlap_mode is OVERLAP_SCALE
+            myaddatom.radius = 0.5;  // default radius, won't be used unless insertion check is 'overlap scale'
         }
 
         addatoms.push_back(myaddatom);
@@ -4543,6 +4387,252 @@ if (overlap_mode[rxnID] != OVERLAP_OFF) {
   memory->destroy(imageflags);
   memory->destroy(rotated_mus);
   return 1;
+}
+
+/* ----------------------------------------------------------------------
+@andraz-gnidovec: set insertion check style of a reaction, only one allowed
+------------------------------------------------------------------------- */
+
+void FixBondReact::set_insert_check_style(int myrxn, int style, const char *keyword)
+{
+  if (insert_check[myrxn].style != INSERT_CHECK_NONE)
+    error->all(FLERR,"Fix bond/react: Only one insertion check (overlap or energy_check) can be "
+               "used per reaction, '{}' conflicts with a previous one", keyword);
+  insert_check[myrxn].style = style;
+}
+
+/* ----------------------------------------------------------------------
+@andraz-gnidovec: decide whether the created atoms of reaction rxnID are rejected
+must be called by all procs, returns the same value on all procs
+------------------------------------------------------------------------- */
+
+int FixBondReact::insert_check_reject(const InsertSite &site)
+{
+  switch (insert_check[rxnID].style) {
+    case INSERT_CHECK_OVERLAP:
+    case INSERT_CHECK_OVERLAP_SCALE:
+      return insert_overlap_reject(site);
+    case INSERT_CHECK_ENERGY:
+      return insert_energy_reject(site);
+    default:
+      return 0;
+  }
+}
+
+/* ----------------------------------------------------------------------
+@andraz-gnidovec: reject if any created atom is closer than the minimum distance
+to an existing atom or to an atom pending insertion
+minimum distance is fixed (overlap) or scaled sum of radii (overlap scale)
+------------------------------------------------------------------------- */
+
+int FixBondReact::insert_overlap_reject(const InsertSite &site)
+{
+  const InsertCheck &ic = insert_check[rxnID];
+  double **coords = site.coords;
+  double **x = atom->x;
+  double delx,dely,delz,rsq,cutoff_sq;
+  int reject = 0;
+
+  for (int m = 0; m < twomol->natoms && !reject; m++) {
+    if (create_atoms[m][rxnID] == 0) continue;
+
+    // new atom radius, only used for overlap scale
+    double new_atom_radius = twomol->radiusflag ? twomol->radius[m] : 0.5;
+
+    // check against all existing local and ghost atoms
+    for (int i = 0; i < atom->nlocal + atom->nghost; i++) {
+      if (ic.style == INSERT_CHECK_OVERLAP_SCALE) {
+        double cutoff_dist = (new_atom_radius + atom->radius[i]) * ic.overlap_factor;
+        cutoff_sq = cutoff_dist * cutoff_dist;
+      } else cutoff_sq = ic.overlapsq;
+
+      delx = coords[m][0] - x[i][0];
+      dely = coords[m][1] - x[i][1];
+      delz = coords[m][2] - x[i][2];
+      domain->minimum_image(FLERR, delx,dely,delz);
+      rsq = delx*delx + dely*dely + delz*delz;
+      if (rsq < cutoff_sq) {
+        reject = 1;
+        break;
+      }
+    }
+    if (reject) break;
+
+    // also check against previous to-be-added atoms
+    for (auto const &myaddatom : addatoms) {
+      if (ic.style == INSERT_CHECK_OVERLAP_SCALE) {
+        double cutoff_dist = (new_atom_radius + myaddatom.radius) * ic.overlap_factor;
+        cutoff_sq = cutoff_dist * cutoff_dist;
+      } else cutoff_sq = ic.overlapsq;
+
+      delx = coords[m][0] - myaddatom.x[0];
+      dely = coords[m][1] - myaddatom.x[1];
+      delz = coords[m][2] - myaddatom.x[2];
+      domain->minimum_image(FLERR, delx,dely,delz);
+      rsq = delx*delx + dely*dely + delz*delz;
+      if (rsq < cutoff_sq) {
+        reject = 1;
+        break;
+      }
+    }
+  }
+
+  // each proc only sees its own local+ghost atoms and locally pending atoms
+  MPI_Allreduce(MPI_IN_PLACE, &reject, 1, MPI_INT, MPI_MAX, world);
+  return reject;
+}
+
+/* ----------------------------------------------------------------------
+@andraz-gnidovec: special neighbor order of atoms m and p (0-based) in reacted template
+returns 0 if not special neighbors, 1,2,3 for 1-2, 1-3, 1-4 neighbors
+created atoms are landlocked, so their reacted-template specials are complete
+and are exactly what is assigned to them on insertion
+------------------------------------------------------------------------- */
+
+int FixBondReact::template_special_order(int m, int p)
+{
+  for (int k = 0; k < twomol->nspecial[m][2]; k++) {
+    if (twomol->special[m][k] == p+1) {
+      if (k < twomol->nspecial[m][0]) return 1;
+      if (k < twomol->nspecial[m][1]) return 2;
+      return 3;
+    }
+  }
+  return 0;
+}
+
+/* ----------------------------------------------------------------------
+@andraz-gnidovec: biased Metropolis criterion on the energy of created atoms
+E = pair energy with existing atoms, atoms pending insertion and each other
+    (with special_bonds factors of the reacted topology)
+  + bond energy of bonds involving created atoms
+accept if E <= Ebias, otherwise accept with probability exp(-(E - Ebias)/kT)
+note: single() is called with dummy atom indices for created atoms,
+      so styles that need per-atom data (e.g. charges) in single() are not supported
+------------------------------------------------------------------------- */
+
+int FixBondReact::insert_energy_reject(const InsertSite &site)
+{
+  const InsertCheck &ic = insert_check[rxnID];
+  double **coords = site.coords;
+  double **mus = site.mus;
+  double **x = atom->x;
+  tagint *tag = atom->tag;
+  double delx,dely,delz,rsq;
+  double fforce;  // dummy variable required by force signature
+  double E_new_vs_old = 0.0, E_new_vs_new = 0.0, E_bond = 0.0;
+
+  // tag of existing (non-created) atom p of reacted template
+  auto site_tag = [&](int p) { return site.glove[equivalences[p][1][rxnID]][site.iupdate]; };
+
+  // pair energy of created atom m with an atom of type jtype and dipole mu_j at distance rsq
+  // n = special neighbor order, 0 if not special
+  auto pair_energy = [&](int m, int jtype, double *mu_j, double rsq, int n) {
+    int itype = twomol->type[m];
+    if (rsq >= force->pair->cutsq[itype][jtype]) return 0.0;
+    double factor_lj = force->special_lj[n];
+    double factor_coul = force->special_coul[n];
+    if (factor_lj == 0.0 && factor_coul == 0.0) return 0.0;    // excluded from neighbor lists
+    if (force->pair->orientation_flag)
+      return force->pair->single_orientation(itype, jtype, rsq, factor_lj, mus[m], mu_j);
+    return force->pair->single(0, 0, itype, jtype, rsq, factor_coul, factor_lj, fforce);
+  };
+
+  // calculate E_new_vs_old, including atoms pending insertion from earlier reactions
+  // loop over owned atoms only: each atom contributes exactly once (via minimum image),
+  // ghost images would double count, then sum across procs
+  // pending atoms are stored only on the proc that will own them
+  for (int m = 0; m < twomol->natoms; m++) {
+    if (create_atoms[m][rxnID] == 0) continue;
+    for (int i = 0; i < atom->nlocal; i++) {
+      delx = coords[m][0] - x[i][0];
+      dely = coords[m][1] - x[i][1];
+      delz = coords[m][2] - x[i][2];
+      domain->minimum_image(FLERR, delx,dely,delz);
+      rsq = delx*delx + dely*dely + delz*delz;
+      if (rsq >= force->pair->cutsq[twomol->type[m]][atom->type[i]]) continue;
+
+      // special neighbor order, only atoms of this reaction site can be special neighbors
+      int n = 0;
+      for (int p = 0; p < twomol->natoms && n == 0; p++)
+        if (create_atoms[p][rxnID] == 0 && site_tag(p) == tag[i]) n = template_special_order(m, p);
+
+      E_new_vs_old += pair_energy(m, atom->type[i], atom->mu ? atom->mu[i] : nullptr, rsq, n);
+    }
+    for (auto &myaddatom : addatoms) {
+      delx = coords[m][0] - myaddatom.x[0];
+      dely = coords[m][1] - myaddatom.x[1];
+      delz = coords[m][2] - myaddatom.x[2];
+      domain->minimum_image(FLERR, delx,dely,delz);
+      rsq = delx*delx + dely*dely + delz*delz;
+      E_new_vs_old += pair_energy(m, myaddatom.type, myaddatom.mu, rsq, 0);
+    }
+  }
+  MPI_Allreduce(MPI_IN_PLACE, &E_new_vs_old, 1, MPI_DOUBLE, MPI_SUM, world);
+
+  // calculate E_new_vs_new (coords and mus are identical on all procs)
+  for (int m = 0; m < twomol->natoms; m++) {
+    if (create_atoms[m][rxnID] == 0) continue;
+    for (int m2 = m + 1; m2 < twomol->natoms; m2++) {
+      if (create_atoms[m2][rxnID] == 0) continue;
+      delx = coords[m][0] - coords[m2][0];
+      dely = coords[m][1] - coords[m2][1];
+      delz = coords[m][2] - coords[m2][2];
+      domain->minimum_image(FLERR, delx,dely,delz);
+      rsq = delx*delx + dely*dely + delz*delz;
+      E_new_vs_new += pair_energy(m, twomol->type[m2], mus[m2], rsq, template_special_order(m, m2));
+    }
+  }
+
+  // calculate E_bond of bonds in reacted template that involve created atoms
+  // only needed on fitroot, which sees all site atoms (as owned or ghost atoms)
+  if (force->bond && comm->me == site.fitroot) {
+    for (int p = 0; p < twomol->natoms; p++) {
+      for (int k = 0; k < twomol->num_bond[p]; k++) {
+        int q = twomol->bond_atom[p][k] - 1;
+        int btype = twomol->bond_type[p][k];
+        if (btype <= 0) continue;
+        if (create_atoms[p][rxnID] == 0 && create_atoms[q][rxnID] == 0) continue;
+        if (!force->newton_bond && q < p) continue;    // bond is stored with both atoms
+
+        double *xp, *xq;
+        int ip = 0, iq = 0;
+        if (create_atoms[p][rxnID]) xp = coords[p];
+        else {
+          ip = atom->map(site_tag(p));
+          if (ip < 0) error->one(FLERR,"Fix bond/react: Reaction site atom missing for energy_check");
+          xp = x[ip];
+        }
+        if (create_atoms[q][rxnID]) xq = coords[q];
+        else {
+          iq = atom->map(site_tag(q));
+          if (iq < 0) error->one(FLERR,"Fix bond/react: Reaction site atom missing for energy_check");
+          xq = x[iq];
+        }
+        delx = xp[0] - xq[0];
+        dely = xp[1] - xq[1];
+        delz = xp[2] - xq[2];
+        domain->minimum_image(FLERR, delx,dely,delz);
+        rsq = delx*delx + dely*dely + delz*delz;
+        E_bond += force->bond->single(btype, rsq, ip, iq, fforce);
+      }
+    }
+  }
+
+  double temp = var_flag[ENERGY_TEMP][rxnID] ?
+    input->variable->compute_equal(var_id[ENERGY_TEMP][rxnID]) : ic.energy_temp;
+  double ebias = var_flag[ENERGY_BIAS][rxnID] ?
+    input->variable->compute_equal(var_id[ENERGY_BIAS][rxnID]) : ic.energy_bias;
+  double dE = E_new_vs_old + E_new_vs_new + E_bond - ebias;
+
+  // decide on the fitting proc only, so a single random number is drawn
+  int reject = 0;
+  if (comm->me == site.fitroot && dE > 0.0) {
+    if (temp <= 0.0) reject = 1;    // at T=0, only accept insertions below the bias
+    else if (random[rxnID]->uniform() > exp(-dE / (force->boltz * temp))) reject = 1;
+  }
+  MPI_Bcast(&reject, 1, MPI_INT, site.fitroot, world);
+  return reject;
 }
 
 /* ----------------------------------------------------------------------

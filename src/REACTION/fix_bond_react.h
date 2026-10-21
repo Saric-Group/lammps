@@ -28,6 +28,7 @@ FixStyle(bond/react,FixBondReact);
 
 #include <map>
 #include <set>
+#include <vector>
 
 namespace LAMMPS_NS {
 
@@ -70,8 +71,6 @@ class FixBondReact : public Fix {
   RESET_MOL_IDS molid_mode;
   int lifetime_flag; // @FelixWodaczek/lifetime flag for lifetime keyword
   int hydrolysis_seed; // @FelixWodaczek/lifetime seed for hydrolysis keyword
-  int *energy_check_flag; //@andraz-gnidovec: flag for energy check keyword
-  double *energy_temp; // @andraz-gnidovec: temperature for metropolis criterion in energy check
   int custom_exclude_flag;
   int **rate_limit;
   int **store_rxn_count;
@@ -85,9 +84,26 @@ class FixBondReact : public Fix {
   int *modify_create_nucrand;          // added vector modify_create_nucrand to store random nucleation flags for each reaction - Chris 20/02/2023
   double *modify_create_nuccyl_rad; // added for cylinder nucleation
   double *modify_create_nuccyl_mod; // added for cylinder nucleation
-  double *overlapsq;
-  double *overlap_factor;      //@andraz-gnidovec: stores the scaling factor for checking overlaps between spherical particles
-  int *overlap_mode;
+  // @andraz-gnidovec: criterion deciding whether created atoms are inserted, at most one per reaction
+  // to add a new criterion: add a style, its parameters, a parse branch, a reject function,
+  // and a case in insert_check_reject()
+  enum InsertCheckStyle { INSERT_CHECK_NONE, INSERT_CHECK_OVERLAP, INSERT_CHECK_OVERLAP_SCALE,
+                          INSERT_CHECK_ENERGY };
+  struct InsertCheck {
+    int style;
+    double overlapsq;         // OVERLAP: squared minimum distance to existing atoms
+    double overlap_factor;    // OVERLAP_SCALE: minimum distance as factor of the sum of radii
+    double energy_temp;       // ENERGY: temperature for Metropolis criterion
+    double energy_bias;       // ENERGY: insertions with energy <= bias are always accepted
+  };
+  std::vector<InsertCheck> insert_check;
+  struct InsertSite {          // created atoms of the reaction being processed, identical on all procs
+    double **coords;           // positions of created atoms (indexed as reacted template)
+    double **mus;              // dipoles of created atoms (indexed as reacted template)
+    int fitroot;               // proc that owns the fitted site atom and sees all site atoms
+    tagint **glove;            // tags of matched pre-reaction atoms: glove[onemol index][iupdate]
+    int iupdate;
+  };
   int *molecule_keyword;
   int maxnconstraints;
   int *nconstraints;
@@ -235,6 +251,11 @@ class FixBondReact : public Fix {
   void ghost_glovecast();
   void update_everything();
   int insert_atoms_setup(tagint **, int);
+  void set_insert_check_style(int, int, const char *);
+  int insert_check_reject(const InsertSite &);    // collective, same result on all procs
+  int insert_overlap_reject(const InsertSite &);
+  int insert_energy_reject(const InsertSite &);
+  int template_special_order(int, int);
   void unlimit_bond(); // removes atoms from stabilization, and other post-reaction every-step operations
   void dedup_mega_gloves(int);    //dedup global mega_glove
   void write_restart(FILE *) override;
