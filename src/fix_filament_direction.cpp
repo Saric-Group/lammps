@@ -54,7 +54,7 @@ static constexpr double NO_NEIGHBOUR = 2.0;    // cosmin of atoms without a coun
 /* ---------------------------------------------------------------------- */
 
 FixFilamentDirection::FixFilamentDirection(LAMMPS *lmp, int narg, char **arg) :
-    Fix(lmp, narg, arg), bondtype_flag(nullptr), type_flag(nullptr), id_props(nullptr), dir(nullptr), nbond(nullptr),
+    Fix(lmp, narg, arg), last_respa_step(-1), bondtype_flag(nullptr), type_flag(nullptr), id_props(nullptr), dir(nullptr), nbond(nullptr),
     npar(nullptr), nanti(nullptr), cosmin(nullptr), chain_index(nullptr), list(nullptr)
 {
   if (narg < 4) utils::missing_cmd_args(FLERR, "fix filament/direction", error);
@@ -218,6 +218,7 @@ int FixFilamentDirection::setmask()
 {
   int mask = 0;
   mask |= PRE_FORCE;
+  mask |= PRE_FORCE_RESPA;
   mask |= MIN_PRE_FORCE;
   return mask;
 }
@@ -292,6 +293,21 @@ void FixFilamentDirection::pre_force(int /*vflag*/)
 
 void FixFilamentDirection::min_pre_force(int vflag)
 {
+  pre_force(vflag);
+}
+
+// rRESPA: update once per step, at the first call, which is on the innermost level after
+// fix bond/react and fix nucleate (post_integrate on the outermost level) and reneighboring,
+// so that pair styles on all levels see the directions of the current topology
+void FixFilamentDirection::setup_pre_force_respa(int vflag, int ilevel)
+{
+  if (ilevel == 0) setup_pre_force(vflag);
+}
+
+void FixFilamentDirection::pre_force_respa(int vflag, int /*ilevel*/, int /*iloop*/)
+{
+  if (update->ntimestep == last_respa_step) return;
+  last_respa_step = update->ntimestep;
   pre_force(vflag);
 }
 

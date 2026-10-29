@@ -40,6 +40,8 @@ class FixFilamentDirection : public Fix {
   void setup(int) override;
   void pre_force(int) override;
   void min_pre_force(int) override;
+  void setup_pre_force_respa(int, int) override;
+  void pre_force_respa(int, int, int) override;
   double compute_vector(int) override;
 
   int pack_forward_comm(int, int *, double *, int, int *) override;
@@ -54,6 +56,7 @@ class FixFilamentDirection : public Fix {
   enum { COMM_DIRECTION, COMM_ALIGNMENT };
 
   int nevery;
+  bigint last_respa_step;    // step of the last rRESPA update
   int *bondtype_flag;    // 1 for the bond types that define the direction
   int *type_flag;        // 1 for the atom types that are filament beads
   int orient;            // how the direction of a bond is decided
