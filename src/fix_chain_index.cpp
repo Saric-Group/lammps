@@ -16,6 +16,11 @@
    0 at the tail (type 2), increasing along the backbone bonds to the
    head (type 3), -1 for atoms that are not part of a well-formed chain.
 
+   modulo N: a relabelling keeps every index modulo N, so that a rule like
+   "index % N == 0" stays attached to the same monomers while the chain
+   treadmills. The tail gets the smallest index in [0, N) for which most
+   of the old indices of the chain keep their value modulo N.
+
    fix bond/react (keyword chain_index) and fix nucleate (chain_index yes)
    keep the index up to date when atoms are added or removed; this fix
    recomputes it from the topology every Nevery steps. It gathers the
@@ -107,6 +112,7 @@ FixChainIndex::FixChainIndex(LAMMPS *lmp, int narg, char **arg) :
   tail_type = 2;
   head_type = 3;
   warnflag = 1;
+  modulo = 1;
 
   int iarg = 4;
   while (iarg < narg) {
@@ -125,6 +131,11 @@ FixChainIndex::FixChainIndex(LAMMPS *lmp, int narg, char **arg) :
     } else if (strcmp(arg[iarg], "warn") == 0) {
       if (iarg + 2 > narg) utils::missing_cmd_args(FLERR, "fix chain/index warn", error);
       warnflag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
+      iarg += 2;
+    } else if (strcmp(arg[iarg], "modulo") == 0) {
+      if (iarg + 2 > narg) utils::missing_cmd_args(FLERR, "fix chain/index modulo", error);
+      modulo = utils::inumeric(FLERR, arg[iarg + 1], false, lmp);
+      if (modulo < 1) error->all(FLERR, "Fix chain/index modulo must be >= 1");
       iarg += 2;
     } else
       error->all(FLERR, "Unknown fix chain/index keyword: {}", arg[iarg]);
@@ -341,7 +352,8 @@ void FixChainIndex::relabel()
     }
     if (branch) branched++;
     if (!ok) continue;
-    for (int k = 0; k < (int) path.size(); k++) label[path[k]] = k;
+    const int offset = chain_offset(path, old_index);
+    for (int k = 0; k < (int) path.size(); k++) label[path[k]] = k + offset;
     nchains++;
     longest = MAX(longest, (int) path.size());
   }
@@ -386,6 +398,38 @@ void FixChainIndex::relabel()
                    "Fix chain/index at step {}: {} chains without a head, {} branched chains, {} "
                    "backbone atoms not reachable from a tail (indices set to -1)",
                    update->ntimestep, no_head, branched, unreached);
+}
+
+/* ----------------------------------------------------------------------
+   index of the tail of a chain (path from tail to head): 0 without modulo,
+   otherwise the residue modulo N shared by most old indices of the chain
+   (old index minus position along the path), the smallest one on a tie
+------------------------------------------------------------------------- */
+
+int FixChainIndex::chain_offset(const std::vector<tagint> &path,
+                                const std::unordered_map<tagint, int> &old_index) const
+{
+  if (modulo == 1) return 0;
+  std::vector<int> votes(modulo, 0);
+  for (int k = 0; k < (int) path.size(); k++) {
+    const int old = old_index.at(path[k]);
+    if (old < 0) continue;
+    votes[((old - k) % modulo + modulo) % modulo]++;
+  }
+  return (int) (std::max_element(votes.begin(), votes.end()) - votes.begin());
+}
+
+/* ----------------------------------------------------------------------
+   modulo: fix bond/react keeps the residue of the new tail with it
+------------------------------------------------------------------------- */
+
+void *FixChainIndex::extract(const char *str, int &dim)
+{
+  if (strcmp(str, "modulo") == 0) {
+    dim = 0;
+    return (void *) &modulo;
+  }
+  return nullptr;
 }
 
 /* ----------------------------------------------------------------------

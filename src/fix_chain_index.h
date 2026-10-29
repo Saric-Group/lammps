@@ -22,6 +22,9 @@ FixStyle(chain/index,FixChainIndex);
 
 #include "fix.h"
 
+#include <unordered_map>
+#include <vector>
+
 namespace LAMMPS_NS {
 
 class FixChainIndex : public Fix {
@@ -39,6 +42,7 @@ class FixChainIndex : public Fix {
   void pre_force_respa(int, int, int) override;
   double compute_vector(int) override;
   void set_arrays(int) override;
+  void *extract(const char *, int &) override;
 
   int pack_forward_comm(int, int *, double *, int, int *) override;
   void unpack_forward_comm(int, int, double *) override;
@@ -53,9 +57,11 @@ class FixChainIndex : public Fix {
   int *attach_flag;      // 1 for bond types that attach side beads to the backbone
   int tail_type, head_type;
   int warnflag;
+  int modulo;            // relabelling keeps the indices modulo this value
   double stats[6];
 
   void relabel();
+  int chain_offset(const std::vector<tagint> &, const std::unordered_map<tagint, int> &) const;
 };
 
 }    // namespace LAMMPS_NS

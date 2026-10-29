@@ -308,6 +308,7 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   chain_index_anyflag = 0;
   chain_cuff = -1;
   chain_index_property = -1;
+  chain_modulo = 1;
   chain_values = nullptr;
   chain_grow_warned = 0;
 
@@ -1129,6 +1130,20 @@ void FixBondReact::init()
     chain_index_property = atom->find_custom("chain_index", flag, cols);
     if (chain_index_anyflag && (chain_index_property < 0 || flag != 0 || cols != 0))
       error->all(FLERR,"Fix bond/react: per-atom integer property i_chain_index is missing");
+
+    // 'chain_index shrink' keeps the index of the new tail modulo the one of fix chain/index
+    chain_modulo = 1;
+    int nmodulo = 0;
+    for (auto *ifix : modify->get_fix_by_style("^chain/index$")) {
+      int dim;
+      auto *value = (int *) ifix->extract("modulo", dim);
+      if (!value) continue;
+      if (nmodulo && *value != chain_modulo)
+        error->all(FLERR,"Fix bond/react: fixes chain/index with different modulo values {} and {}",
+                   chain_modulo, *value);
+      chain_modulo = *value;
+      nmodulo++;
+    }
   }
 
 
@@ -3654,10 +3669,11 @@ void FixBondReact::update_everything()
 
           if (landlocked_atoms[j][rxnID] == 1)
             type[ilocal] = twomol->type[j];
-          // @FelixWodaczek/chain-index the surviving atoms with the smallest index become the new tail
+          // @FelixWodaczek/chain-index the surviving atoms with the smallest index become the new tail,
+          // with the smallest index of the same residue modulo chain_modulo (0 without modulo)
           if (chain_mode[rxnID] == CHAIN_SHRINK && chain_values[i] > 0 && delete_atoms[jj][rxnID] == 0) {
             int *chain_index = atom->ivector[chain_index_property];
-            if (chain_index[ilocal] == (int) chain_values[i]) chain_index[ilocal] = 0;
+            if (chain_index[ilocal] == (int) chain_values[i]) chain_index[ilocal] %= chain_modulo;
           }
           if (twomol->qflag && atom->q_flag && custom_charges[jj][rxnID] == 1) {
             double *q = atom->q;
