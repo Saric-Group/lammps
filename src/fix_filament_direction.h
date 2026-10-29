@@ -65,18 +65,27 @@ class FixFilamentDirection : public Fix {
   int exclude_special;
   int mu_flag;
 
+  // side keyword: per-atom surface normal (e.g. d2_avg_nvecs of pair harmonic/surface/avg)
+  int side_flag;
+  std::string name_normal;
+  double **normal;
+
   // per-atom output, stored in an internal fix property/atom
   char *id_props;
   std::string name_dir, name_nbond, name_npar, name_nanti, name_cosmin;
+  std::string name_left, name_nll, name_nrr;
   double **dir;
   int *nbond, *npar, *nanti;
   double *cosmin;
+  double **left;       // side keyword: unit vector normal x dir, pointing to the left side
+  int *nll, *nrr;      // side keyword: anti-parallel neighbours meeting left-left / right-right
 
   int commflag;
   int *chain_index;    // orient chain_index: per-atom chain index of local and ghost atoms
   class NeighList *list;
 
   void find_properties();
+  void find_normal();
   void compute();
   void compute_direction();
   void compute_alignment();

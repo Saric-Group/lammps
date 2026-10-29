@@ -25,6 +25,14 @@
    atom with the higher per-atom chain index (i_chain_index, maintained by
    fix chain/index and fix bond/react ... chain_index), independent of the
    storage order and of newton_bond.
+
+   side: with a per-atom surface normal n (e.g. d2_avg_nvecs of pair
+   harmonic/surface/avg), every bead gets the in-plane unit vector
+   left = n x t. Looking along t with n pointing up, it points to the left.
+   A neighbour j of i sits on the left of i if (x_j - x_i).left_i > 0.
+   Anti-parallel neighbours (t_j = -t_i, n_j = n_i) see each other on the
+   same side, so their contact is either left-left or right-right;
+   parallel neighbours always meet left-right.
 ------------------------------------------------------------------------- */
 
 #include "fix_filament_direction.h"
@@ -54,8 +62,8 @@ static constexpr double NO_NEIGHBOUR = 2.0;    // cosmin of atoms without a coun
 /* ---------------------------------------------------------------------- */
 
 FixFilamentDirection::FixFilamentDirection(LAMMPS *lmp, int narg, char **arg) :
-    Fix(lmp, narg, arg), last_respa_step(-1), bondtype_flag(nullptr), type_flag(nullptr), id_props(nullptr), dir(nullptr), nbond(nullptr),
-    npar(nullptr), nanti(nullptr), cosmin(nullptr), chain_index(nullptr), list(nullptr)
+    Fix(lmp, narg, arg), last_respa_step(-1), bondtype_flag(nullptr), type_flag(nullptr), normal(nullptr), id_props(nullptr), dir(nullptr), nbond(nullptr),
+    npar(nullptr), nanti(nullptr), cosmin(nullptr), left(nullptr), nll(nullptr), nrr(nullptr), chain_index(nullptr), list(nullptr)
 {
   if (narg < 4) utils::missing_cmd_args(FLERR, "fix filament/direction", error);
   if (!atom->molecular) error->all(FLERR, "Fix filament/direction requires a molecular system");
@@ -76,6 +84,7 @@ FixFilamentDirection::FixFilamentDirection(LAMMPS *lmp, int narg, char **arg) :
   lateral_cos = 1.0;
   exclude_special = 1;
   mu_flag = 0;
+  side_flag = 0;
 
   int iarg = 4;
   while (iarg < narg) {
@@ -150,6 +159,17 @@ FixFilamentDirection::FixFilamentDirection(LAMMPS *lmp, int narg, char **arg) :
       if (iarg + 2 > narg) utils::missing_cmd_args(FLERR, "fix filament/direction mu", error);
       mu_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
       iarg += 2;
+    } else if (strcmp(arg[iarg], "side") == 0) {
+      // name of a 3-column per-atom array with the surface normal, d2_name or name, or none
+      if (iarg + 2 > narg) utils::missing_cmd_args(FLERR, "fix filament/direction side", error);
+      if (strcmp(arg[iarg + 1], "none") == 0) {
+        side_flag = 0;
+      } else {
+        side_flag = 1;
+        name_normal = arg[iarg + 1];
+        if (utils::strmatch(name_normal, "^d2_")) name_normal = name_normal.substr(3);
+      }
+      iarg += 2;
     } else
       error->all(FLERR, "Unknown fix filament/direction keyword: {}", arg[iarg]);
   }
@@ -162,13 +182,16 @@ FixFilamentDirection::FixFilamentDirection(LAMMPS *lmp, int narg, char **arg) :
   name_npar = std::string(id) + "_npar";
   name_nanti = std::string(id) + "_nanti";
   name_cosmin = std::string(id) + "_cosmin";
+  name_left = std::string(id) + "_left";
+  name_nll = std::string(id) + "_nll";
+  name_nrr = std::string(id) + "_nrr";
 
   vector_flag = 1;
-  size_vector = 3;
+  size_vector = 5;
   extvector = 0;
   dynamic_group_allow = 1;
-  comm_forward = 4;
-  comm_reverse = 4;
+  comm_forward = side_flag ? 7 : 4;
+  comm_reverse = side_flag ? 5 : 4;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -185,14 +208,17 @@ FixFilamentDirection::~FixFilamentDirection()
    per-atom output lives in an internal fix property/atom, so it migrates
    with the atoms, goes into restart files and can be used in dumps and
    atom-style variables as d2_ID_dir[1-3], i_ID_nbond, i_ID_npar,
-   i_ID_nanti and d_ID_cosmin
+   i_ID_nanti and d_ID_cosmin, with side also d2_ID_left[1-3], i_ID_nll
+   and i_ID_nrr
 ------------------------------------------------------------------------- */
 
 void FixFilamentDirection::post_constructor()
 {
   id_props = utils::strdup(std::string(id) + "_props_internal");
-  modify->add_fix(fmt::format("{} all property/atom d2_{} 3 i_{} i_{} i_{} d_{} ghost yes", id_props,
-                              name_dir, name_nbond, name_npar, name_nanti, name_cosmin));
+  std::string props = fmt::format("d2_{} 3 i_{} i_{} i_{} d_{}", name_dir, name_nbond, name_npar,
+                                  name_nanti, name_cosmin);
+  if (side_flag) props += fmt::format(" d2_{} 3 i_{} i_{}", name_left, name_nll, name_nrr);
+  modify->add_fix(fmt::format("{} all property/atom {} ghost yes", id_props, props));
   find_properties();
   for (int i = 0; i < atom->nlocal; i++) cosmin[i] = NO_NEIGHBOUR;
 }
@@ -210,6 +236,28 @@ void FixFilamentDirection::find_properties()
   npar = atom->ivector[atom->find_custom(name_npar.c_str(), flag, cols)];
   nanti = atom->ivector[atom->find_custom(name_nanti.c_str(), flag, cols)];
   cosmin = atom->dvector[atom->find_custom(name_cosmin.c_str(), flag, cols)];
+  if (side_flag) {
+    left = atom->darray[atom->find_custom(name_left.c_str(), flag, cols)];
+    nll = atom->ivector[atom->find_custom(name_nll.c_str(), flag, cols)];
+    nrr = atom->ivector[atom->find_custom(name_nrr.c_str(), flag, cols)];
+  }
+}
+
+/* ----------------------------------------------------------------------
+   side keyword: the surface normal array may be created after this fix,
+   e.g. by a pair style, so it is looked up at init and before every use
+------------------------------------------------------------------------- */
+
+void FixFilamentDirection::find_normal()
+{
+  int flag, cols;
+  const int index = atom->find_custom(name_normal.c_str(), flag, cols);
+  if (index < 0 || flag != 1 || cols != 3)
+    error->all(FLERR,
+               "Fix filament/direction side needs a 3-column per-atom array d2_{} with the surface "
+               "normal (e.g. from pair style harmonic/surface/avg)",
+               name_normal);
+  normal = atom->darray[index];
 }
 
 /* ---------------------------------------------------------------------- */
@@ -248,6 +296,7 @@ void FixFilamentDirection::init()
   }
   if (mu_flag && !atom->mu_flag)
     error->all(FLERR, "Fix filament/direction mu yes requires an atom style with dipoles");
+  if (side_flag) find_normal();
 
   if (cutoff > 0.0) {
     double cutneigh = cutoff + neighbor->skin;
@@ -279,10 +328,12 @@ void FixFilamentDirection::setup_pre_force(int /*vflag*/)
 
 // a dynamic group gets its members in FixGroup::setup(), after setup_pre_force(), and
 // fix chain/index relabels in its setup() for a dynamic group, so recompute once both
-// are done (fixes are set up in the order they were defined)
+// are done (fixes are set up in the order they were defined).
+// with side, the normals of a pair style are only computed with the setup forces,
+// after setup_pre_force(), so recompute for them too
 void FixFilamentDirection::setup(int /*vflag*/)
 {
-  if (group->dynamic[igroup] || orient == CHAIN_INDEX) compute();
+  if (group->dynamic[igroup] || orient == CHAIN_INDEX || side_flag) compute();
 }
 
 void FixFilamentDirection::pre_force(int /*vflag*/)
@@ -320,6 +371,7 @@ void FixFilamentDirection::compute()
     int flag, cols;
     chain_index = atom->ivector[atom->find_custom("chain_index", flag, cols)];
   }
+  if (side_flag) find_normal();
   compute_direction();
   if (cutoff > 0.0) compute_alignment();
 }
@@ -417,10 +469,32 @@ void FixFilamentDirection::compute_direction()
       mu[i][2] = dir[i][2];
       mu[i][3] = (len > SMALL) ? 1.0 : 0.0;
     }
+    if (side_flag) {
+      // left = n x t. The normal of a pair style is from the forces of the previous step,
+      // atoms created since then have none yet and get no side
+      double l[3] = {0.0, 0.0, 0.0};
+      if (is_bead(i)) {
+        const double *nv = normal[i];
+        l[0] = nv[1] * dir[i][2] - nv[2] * dir[i][1];
+        l[1] = nv[2] * dir[i][0] - nv[0] * dir[i][2];
+        l[2] = nv[0] * dir[i][1] - nv[1] * dir[i][0];
+        const double llen = sqrt(l[0] * l[0] + l[1] * l[1] + l[2] * l[2]);
+        if (llen > SMALL) {
+          l[0] /= llen;
+          l[1] /= llen;
+          l[2] /= llen;
+        } else {
+          l[0] = l[1] = l[2] = 0.0;
+        }
+      }
+      left[i][0] = l[0];
+      left[i][1] = l[1];
+      left[i][2] = l[2];
+    }
   }
 
   commflag = COMM_DIRECTION;
-  comm->forward_comm(this, 4);
+  comm->forward_comm(this, side_flag ? 7 : 4);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -436,7 +510,8 @@ bool FixFilamentDirection::is_special(int i, int j)
 }
 
 /* ----------------------------------------------------------------------
-   count parallel and anti-parallel neighbours within the cutoff
+   count parallel and anti-parallel neighbours within the cutoff, with
+   side also the anti-parallel ones meeting left-left and right-right
 ------------------------------------------------------------------------- */
 
 void FixFilamentDirection::compute_alignment()
@@ -450,6 +525,7 @@ void FixFilamentDirection::compute_alignment()
   for (int i = 0; i < nall; i++) {
     npar[i] = nanti[i] = 0;
     cosmin[i] = NO_NEIGHBOUR;
+    if (side_flag) nll[i] = nrr[i] = 0;
   }
 
   const int inum = list->inum;
@@ -488,30 +564,50 @@ void FixFilamentDirection::compute_alignment()
       const int is_par = (c >= parallel_cos);
       const int is_anti = (c <= antiparallel_cos);
 
+      // side of j seen from i and of i seen from j, both left or both right for
+      // anti-parallel neighbours; mixed or unknown sides are not counted
+      int is_ll = 0, is_rr = 0;
+      if (side_flag && is_anti) {
+        const double si = delx * left[i][0] + dely * left[i][1] + delz * left[i][2];
+        const double sj = -(delx * left[j][0] + dely * left[j][1] + delz * left[j][2]);
+        is_ll = (si > 0.0 && sj > 0.0);
+        is_rr = (si < 0.0 && sj < 0.0);
+      }
+
       npar[i] += is_par;
       nanti[i] += is_anti;
       if (c < cosmin[i]) cosmin[i] = c;
+      if (side_flag) {
+        nll[i] += is_ll;
+        nrr[i] += is_rr;
+      }
       if (newton_pair || j < nlocal) {
         npar[j] += is_par;
         nanti[j] += is_anti;
         if (c < cosmin[j]) cosmin[j] = c;
+        if (side_flag) {
+          nll[j] += is_ll;
+          nrr[j] += is_rr;
+        }
       }
     }
   }
 
   if (newton_pair) {
     commflag = COMM_ALIGNMENT;
-    comm->reverse_comm(this, 3);
+    comm->reverse_comm(this, side_flag ? 5 : 3);
   }
 }
 
 /* ----------------------------------------------------------------------
-   global vector: number of atoms with a direction, with a parallel and
-   with an anti-parallel neighbour
+   global vector: number of atoms with a direction, with a parallel, with
+   an anti-parallel, with a left-left and with a right-right neighbour
+   (the last two are 0 without side)
 ------------------------------------------------------------------------- */
 
 double FixFilamentDirection::compute_vector(int n)
 {
+  if (n >= 3 && !side_flag) return 0.0;
   find_properties();
   const int nlocal = atom->nlocal;
   bigint count = 0;
@@ -521,8 +617,12 @@ double FixFilamentDirection::compute_vector(int n)
       count += (nbond[i] > 0);
     else if (n == 1)
       count += (npar[i] > 0);
-    else
+    else if (n == 2)
       count += (nanti[i] > 0);
+    else if (n == 3)
+      count += (nll[i] > 0);
+    else
+      count += (nrr[i] > 0);
   }
   bigint all;
   MPI_Allreduce(&count, &all, 1, MPI_LMP_BIGINT, MPI_SUM, world);
@@ -541,6 +641,11 @@ int FixFilamentDirection::pack_forward_comm(int n, int *list, double *buf, int /
     buf[m++] = dir[j][1];
     buf[m++] = dir[j][2];
     buf[m++] = ubuf(nbond[j]).d;
+    if (side_flag) {
+      buf[m++] = left[j][0];
+      buf[m++] = left[j][1];
+      buf[m++] = left[j][2];
+    }
   }
   return m;
 }
@@ -554,6 +659,11 @@ void FixFilamentDirection::unpack_forward_comm(int n, int first, double *buf)
     dir[i][1] = buf[m++];
     dir[i][2] = buf[m++];
     nbond[i] = (int) ubuf(buf[m++]).i;
+    if (side_flag) {
+      left[i][0] = buf[m++];
+      left[i][1] = buf[m++];
+      left[i][2] = buf[m++];
+    }
   }
 }
 
@@ -573,6 +683,10 @@ int FixFilamentDirection::pack_reverse_comm(int n, int first, double *buf)
       buf[m++] = ubuf(npar[i]).d;
       buf[m++] = ubuf(nanti[i]).d;
       buf[m++] = cosmin[i];
+      if (side_flag) {
+        buf[m++] = ubuf(nll[i]).d;
+        buf[m++] = ubuf(nrr[i]).d;
+      }
     }
   }
   return m;
@@ -593,6 +707,10 @@ void FixFilamentDirection::unpack_reverse_comm(int n, int *list, double *buf)
       nanti[j] += (int) ubuf(buf[m++]).i;
       const double c = buf[m++];
       if (c < cosmin[j]) cosmin[j] = c;
+      if (side_flag) {
+        nll[j] += (int) ubuf(buf[m++]).i;
+        nrr[j] += (int) ubuf(buf[m++]).i;
+      }
     }
   }
 }
@@ -613,6 +731,11 @@ void *FixFilamentDirection::extract(const char *str, int &dim)
   if (strcmp(str, "nbond") == 0) {
     dim = 1;
     return (void *) nbond;
+  }
+  // side: left vector of local and ghost atoms, for pair styles that act on the side
+  if (strcmp(str, "left") == 0 && side_flag) {
+    dim = 2;
+    return (void *) left;
   }
   return nullptr;
 }
