@@ -89,7 +89,7 @@ void parse_types(LAMMPS *lmp, int narg, char **arg, int &iarg, int ntypes, int *
 /* ---------------------------------------------------------------------- */
 
 FixChainIndex::FixChainIndex(LAMMPS *lmp, int narg, char **arg) :
-    Fix(lmp, narg, arg), bondtype_flag(nullptr), attach_flag(nullptr)
+    Fix(lmp, narg, arg), last_respa_step(-1), bondtype_flag(nullptr), attach_flag(nullptr)
 {
   if (narg < 4) utils::missing_cmd_args(FLERR, "fix chain/index", error);
   if (!atom->molecular) error->all(FLERR, "Fix chain/index requires a molecular system");
@@ -196,6 +196,7 @@ int FixChainIndex::setmask()
 {
   int mask = 0;
   mask |= PRE_FORCE;
+  mask |= PRE_FORCE_RESPA;
   mask |= MIN_PRE_FORCE;
   return mask;
 }
@@ -221,6 +222,21 @@ void FixChainIndex::pre_force(int /*vflag*/)
 
 void FixChainIndex::min_pre_force(int vflag)
 {
+  pre_force(vflag);
+}
+
+// rRESPA: relabel once per step, at the first call, which is on the innermost level after
+// fix bond/react and fix nucleate (post_integrate on the outermost level) and reneighboring,
+// and before fix filament/direction (fixes are called in the order they were defined)
+void FixChainIndex::setup_pre_force_respa(int vflag, int ilevel)
+{
+  if (ilevel == 0) setup_pre_force(vflag);
+}
+
+void FixChainIndex::pre_force_respa(int vflag, int /*ilevel*/, int /*iloop*/)
+{
+  if (update->ntimestep == last_respa_step) return;
+  last_respa_step = update->ntimestep;
   pre_force(vflag);
 }
 

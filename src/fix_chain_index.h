@@ -35,6 +35,8 @@ class FixChainIndex : public Fix {
   void setup(int) override;
   void pre_force(int) override;
   void min_pre_force(int) override;
+  void setup_pre_force_respa(int, int) override;
+  void pre_force_respa(int, int, int) override;
   double compute_vector(int) override;
   void set_arrays(int) override;
 
@@ -46,6 +48,7 @@ class FixChainIndex : public Fix {
 
  protected:
   int nevery;
+  bigint last_respa_step;    // step of the last rRESPA update
   int *bondtype_flag;    // 1 for backbone bond types
   int *attach_flag;      // 1 for bond types that attach side beads to the backbone
   int tail_type, head_type;
