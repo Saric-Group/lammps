@@ -44,6 +44,8 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
   warnflag = WARN;
   insert_sigma = 1.0;
   bond_type = 1; // bond type of the inserted dimer
+  insert_types[0] = 2; insert_types[1] = 3; // atom types of the inserted dimer
+  overlap_except.assign(atom->ntypes + 1, 0); // atom types ignored in the overlap check
   noffset = 0; // run when (step - noffset) % nevery == 0
   lifetime_owner = false; // lifetime tracking
   hydrolysis_owner = false; // lifetime tracking
@@ -84,6 +86,30 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
       if (bond_type < 1 || bond_type > atom->nbondtypes)
         error->all(FLERR, "Invalid bond type {} for fix nucleate", bond_type);
       iarg += 2;
+    } else if (strcmp(arg[iarg],"types") == 0) {
+      if (iarg + 3 > narg)
+        error->all(FLERR, "Missing numeric parameters after types kwarg.");
+
+      for (int i = 0; i < 2; i++) {
+        insert_types[i] = utils::inumeric(FLERR, arg[iarg+1+i], false, lmp);
+        if (insert_types[i] < 1 || insert_types[i] > atom->ntypes)
+          error->all(FLERR, "Invalid atom type {} for fix nucleate types", insert_types[i]);
+      }
+      iarg += 3;
+    } else if (strcmp(arg[iarg],"nooverlap") == 0) {
+      if (iarg + 2 > narg)
+        error->all(FLERR, "Missing numeric parameter after nooverlap kwarg.");
+
+      int num_except_types = utils::inumeric(FLERR, arg[iarg+1], false, lmp);
+      if (num_except_types < 0 || iarg + 2 + num_except_types > narg)
+        error->all(FLERR, "Fix nucleate: 'nooverlap' has too few arguments");
+      for (int i = 0; i < num_except_types; i++) {
+        int except_type = utils::inumeric(FLERR, arg[iarg+2+i], false, lmp);
+        if (except_type < 1 || except_type > atom->ntypes)
+          error->all(FLERR, "Invalid atom type {} for fix nucleate nooverlap", except_type);
+        overlap_except[except_type] = 1;
+      }
+      iarg += 2 + num_except_types;
     } else if (strcmp(arg[iarg],"nowarn") == 0) {
       warnflag = NOWARN;
       iarg += 1;
@@ -382,8 +408,8 @@ void FixNucleate::post_integrate() {
     // check if there is an overlap with existing atoms
     if (overlap_flags[icoord]) continue;
 
-    atom->avec->create_atom(2, insert_coords[icoord]);
-    atom->avec->create_atom(3, insert_coords[icoord]+3);
+    atom->avec->create_atom(insert_types[0], insert_coords[icoord]);
+    atom->avec->create_atom(insert_types[1], insert_coords[icoord]+3);
 
     for (int newind=atom->nlocal-2; newind<atom->nlocal; newind++) {
       initialise_v(atom->v[newind], atom->rmass[newind]);
@@ -520,6 +546,7 @@ void FixNucleate::check_overlap(double* coords, int& overlapflag) {
   double delx, dely, delz, rsq;
   if (overlapsq > 0) {
     for (int i = 0; i < atom->nlocal+atom->nghost; i++) {
+      if (overlap_except[atom->type[i]]) continue;
       delx = coords[0] - atom->x[i][0];
       dely = coords[1] - atom->x[i][1];
       delz = coords[2] - atom->x[i][2];

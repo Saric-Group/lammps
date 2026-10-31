@@ -9,6 +9,8 @@ FixStyle(nucleate, FixNucleate)
 
 #include "fix.h"
 
+#include <vector>
+
 namespace LAMMPS_NS {
 
 class FixNucleate : public Fix {
@@ -44,6 +46,8 @@ class FixNucleate : public Fix {
     double overlap, overlapsq; // minimum distance from existing atoms
     double insert_sigma; // bond length of inserted dimer
     int bond_type; // bond type of inserted dimer
+    int insert_types[2]; // atom types of inserted dimer
+    std::vector<int> overlap_except; // per atom type: 1 if ignored in the overlap check
     int noffset; // run at timestep + noffset to avoid clashes with eg. bond/react
 
     // lifetime tracking flags and variables
