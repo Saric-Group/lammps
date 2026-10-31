@@ -32,6 +32,7 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
   int iarg = 3;
   force_reneighbor = 1;
   next_reneighbor = -1;
+  dynamic_group_allow = 1; // the group is evaluated from the atom masks at every nucleation step
 
   // necessary args
   nevery = utils::inumeric(FLERR, arg[iarg++], false, lmp);
