@@ -8,6 +8,7 @@
 #include "fix.h"
 #include "force.h"
 #include "group.h"
+#include "input.h"
 #include "math_extra.h"
 #include "memory.h"
 #include "modify.h"
@@ -16,6 +17,7 @@
 #include "random_mars.h"
 #include "respa.h"
 #include "update.h"
+#include "variable.h"
 
 #include <set>
 #include "fix_chain_index.h"
@@ -40,6 +42,7 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
 
   // standard values for kwargs
   prob = 1.;
+  probstr = nullptr;
   r_surf = 1.0;
   overlap = 0; overlapsq=0;
   warnflag = WARN;
@@ -57,7 +60,9 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
       if (iarg + 2 > narg)
         error->all(FLERR, "Missing numeric parameter after prob kwarg.");
 
-      prob = utils::numeric(FLERR, arg[iarg+1], false, lmp);
+      // @FelixWodaczek/nucleate-variable prob v_name: equal-style variable evaluated whenever the fix nucleates
+      if (utils::strmatch(arg[iarg+1], "^v_")) probstr = utils::strdup(arg[iarg+1] + 2);
+      else prob = utils::numeric(FLERR, arg[iarg+1], false, lmp);
       iarg += 2;
     } else if (strcmp(arg[iarg],"Rsurf") == 0) {
       if (iarg + 2 > narg)
@@ -140,6 +145,7 @@ FixNucleate::~FixNucleate() {
   if (hydrolysis_owner && id_hydrolysis_fix != nullptr && modify->get_fix_by_id(id_hydrolysis_fix)) modify->delete_fix(id_hydrolysis_fix);
   delete[] id_lifetime_fix;
   delete[] id_hydrolysis_fix;
+  delete[] probstr;
 }
 
 void FixNucleate::post_constructor() {
@@ -191,6 +197,13 @@ void FixNucleate::init() {
   if (utils::strmatch(update->integrate_style,"^respa"))
     nlevels_respa = (dynamic_cast<Respa *>(update->integrate))->nlevels;
 
+  if (probstr) {
+    probvar = input->variable->find(probstr);
+    if (probvar < 0) error->all(FLERR, "Variable {} for fix nucleate prob does not exist", probstr);
+    if (!input->variable->equalstyle(probvar))
+      error->all(FLERR, "Variable {} for fix nucleate prob is not equal-style", probstr);
+  }
+
   avec = dynamic_cast<AtomVecEllipsoid *>(atom->style_match("ellipsoid"));
   if (!avec) error->all(FLERR, "Pair style ylz requires atom style ellipsoid");
 
@@ -218,6 +231,8 @@ void FixNucleate::post_integrate() {
   // TODO: remove alignment atom/property
   // TODO: forward_comm somehow breaks everything, would be nice if this could work at some point
   if ((update->ntimestep-noffset) % nevery) return;
+
+  if (probstr) prob = input->variable->compute_equal(probvar);
 
   // figure out how many nucleation events to attempt this step
   int n_nucleate_group = 0;

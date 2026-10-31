@@ -40,6 +40,8 @@ class FixNucleate : public Fix {
     int seed; // seed for random number generator
     int warnflag; // whether to warn if no nucleation events occur
     double prob; // probability (0-1) of nucleation event occurring per particle
+    char *probstr; // @FelixWodaczek/nucleate-variable name of equal-style variable for prob (nullptr = constant)
+    int probvar; // @FelixWodaczek/nucleate-variable index of that variable
     double r_surf; // distance of particle from surface
     double overlap, overlapsq; // minimum distance from existing atoms
     double insert_sigma; // bond length of inserted dimer
