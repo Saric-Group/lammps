@@ -2212,7 +2212,8 @@ int FixBondReact::check_constraints()
       t = get_temperature(glove,0,1);
       prrhob = constraints[i][rxnID].par[1]*pow(t,constraints[i][rxnID].par[2])*
         exp(-constraints[i][rxnID].par[3]/(force->boltz*t));
-      if (prrhob < rrhandom[(int) constraints[i][rxnID].par[0]]->uniform()) satisfied[i] = 0;
+      // accept with probability prrhob: uniform() is in [0,1), so u < prrhob (never accepts prrhob = 0)
+      if (!(rrhandom[(int) constraints[i][rxnID].par[0]]->uniform() < prrhob)) satisfied[i] = 0;
     } else if (constraints[i][rxnID].type == RMSD) {
       // call superpose
       int iatom;
@@ -4626,10 +4627,16 @@ int FixBondReact::insert_energy_reject(const InsertSite &site)
   double dE = E_new_vs_old + E_new_vs_new + E_bond - ebias;
 
   // decide on the fitting proc only, so a single random number is drawn
+  // written as an acceptance condition, so NaN energies or temperatures are rejected
+  // compared in log space with 1-u in (0,1]: no exp() underflow, and acceptance probabilities
+  // below the RNG resolution (2^-24, i.e. dE > ~16.6 kT) are rounded down to 0, never up
+  // at T=0, only insertions below the bias are accepted
   int reject = 0;
-  if (comm->me == site.fitroot && dE > 0.0) {
-    if (temp <= 0.0) reject = 1;    // at T=0, only accept insertions below the bias
-    else if (random[rxnID]->uniform() > exp(-dE / (force->boltz * temp))) reject = 1;
+  if (comm->me == site.fitroot) {
+    int accept = (dE <= 0.0);
+    if (!accept && temp > 0.0)
+      accept = (dE / (force->boltz * temp) < -log(1.0 - random[rxnID]->uniform()));
+    reject = !accept;
   }
   MPI_Bcast(&reject, 1, MPI_INT, site.fitroot, world);
   return reject;
