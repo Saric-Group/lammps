@@ -147,7 +147,7 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
       tang_dist = sqrt(MAX(rsq - normal_dist * normal_dist, 0.0));
       if (rsq >= cutsq[itype][jtype] || tang_dist > cut_tang[itype][jtype]) continue;
 
-      // distance along the (not renormalised) average normal
+      // distance along the average normal (unit length, or zero if the normals cancel)
       const double delta = r_zero[itype][jtype] - std::abs(delx * normx + dely * normy + delz * normz);
       // the harmonic potential is shared between all contributing surface atoms,
       // energy and force of one pair are 1/N of the full potential
@@ -364,6 +364,15 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
       avg_nvecs_atom[i][0] /= nnvec_contributors_atom[i];
       avg_nvecs_atom[i][1] /= nnvec_contributors_atom[i];
       avg_nvecs_atom[i][2] /= nnvec_contributors_atom[i];
+
+      normr = sqrt(avg_nvecs_atom[i][0] * avg_nvecs_atom[i][0] +
+                   avg_nvecs_atom[i][1] * avg_nvecs_atom[i][1] +
+                   avg_nvecs_atom[i][2] * avg_nvecs_atom[i][2]);
+      if (normr > 0.0) {
+        avg_nvecs_atom[i][0] /= normr;
+        avg_nvecs_atom[i][1] /= normr;
+        avg_nvecs_atom[i][2] /= normr;
+      }
     }
   }
 
