@@ -22,6 +22,8 @@ PairStyle(nematic/angle/soft,PairNematicSoft);
 
 #include "pair.h"
 
+#include <string>
+
 namespace LAMMPS_NS {
 
 class PairNematicSoft : public Pair {
@@ -37,6 +39,9 @@ class PairNematicSoft : public Pair {
  protected:
   double cut_global;
   int intermol_flag;
+  int normal_fixed;           // 1: constant normal normal_vec, 0: per-atom array name_normal
+  double normal_vec[3];
+  std::string name_normal;    // 3-column per-atom array d2_name with the surface normal
   double **Aamp, **Amin, **kappa, **theta0, **cut;
   double **c0, **s0;    // cos and sin of theta0
 

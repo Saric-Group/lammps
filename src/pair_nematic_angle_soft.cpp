@@ -13,15 +13,24 @@
 
 /* ----------------------------------------------------------------------
    Pair style nematic/angle/soft: soft interaction between the dipoles of
-   two beads with preferred crossing angles +-theta0. Based on the style of
-   Andraz Gnidovec (branch feature/update-treadmilling/dipole).
+   two beads with preferred crossing angles +-theta0. Based on the 2D style of
+   Andraz Gnidovec (branch feature/update-treadmilling/dipole), generalised
+   to 3D with a surface normal.
 
    E = (1 + cos(pi r / rc)) U(theta)
    U = Amin + (A - Amin) (1 - exp(-2 kappa sin^2(theta - theta0)))
                          (1 - exp(-2 kappa sin^2(theta + theta0)))
 
-   This version assumes unit dipoles in the xy plane, theta is the signed
-   angle from mu_i to mu_j, the torque has only a z component.
+   theta is the signed angle from mu_i to mu_j, measured in the tangent
+   plane of the surface: n is the normalised sum of the surface normals of the
+   two beads, mu_k' = mu_k - (mu_k.n) n the projections, c = cos(theta) =
+   mu_i'.mu_j' / (|mu_i'| |mu_j'|), s = sin(theta) = n.(mu_i' x mu_j') / (...).
+   Pairs whose normals cancel or with a dipole (almost) along n are skipped.
+
+   The torques are the exact derivatives of E with respect to the dipole
+   orientations. The force is the radial derivative of the cosine envelope
+   only: the normal is taken as constant, so the force is not conservative
+   where the normal changes with the bead positions (like harmonic/surface).
 ------------------------------------------------------------------------- */
 
 #include "pair_nematic_angle_soft.h"
@@ -41,11 +50,12 @@ using namespace LAMMPS_NS;
 /* ---------------------------------------------------------------------- */
 
 PairNematicSoft::PairNematicSoft(LAMMPS *lmp) :
-    Pair(lmp), cut_global(0.0), intermol_flag(0), Aamp(nullptr), Amin(nullptr), kappa(nullptr),
+    Pair(lmp), cut_global(0.0), intermol_flag(0), normal_fixed(0), name_normal("avg_nvecs"), Aamp(nullptr), Amin(nullptr), kappa(nullptr),
     theta0(nullptr), cut(nullptr), c0(nullptr), s0(nullptr)
 {
   single_enable = 0;
   restartinfo = 0;
+  normal_vec[0] = normal_vec[1] = normal_vec[2] = 0.0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -86,20 +96,44 @@ void PairNematicSoft::allocate()
 }
 
 /* ----------------------------------------------------------------------
-   pair_style nematic/angle/soft cutoff [intermol]
+   pair_style nematic/angle/soft cutoff [intermol] [normal d2_name | normal fixed nx ny nz]
 ------------------------------------------------------------------------- */
 
 void PairNematicSoft::settings(int narg, char **arg)
 {
-  if (narg < 1 || narg > 2) error->all(FLERR, "Illegal pair_style nematic/angle/soft command");
+  if (narg < 1) error->all(FLERR, "Illegal pair_style nematic/angle/soft command");
   cut_global = utils::numeric(FLERR, arg[0], false, lmp);
   if (cut_global <= 0.0) error->all(FLERR, "Pair style nematic/angle/soft: cutoff must be positive");
+
   intermol_flag = 0;
-  if (narg == 2) {
-    if (strcmp(arg[1], "intermol") == 0)
+  normal_fixed = 0;
+  name_normal = "avg_nvecs";
+  int iarg = 1;
+  while (iarg < narg) {
+    if (strcmp(arg[iarg], "intermol") == 0) {
       intermol_flag = 1;
-    else
-      error->all(FLERR, "Unknown keyword {} for pair_style nematic/angle/soft", arg[1]);
+      iarg++;
+    } else if (strcmp(arg[iarg], "normal") == 0) {
+      if (iarg + 2 > narg) utils::missing_cmd_args(FLERR, "pair_style nematic/angle/soft normal", error);
+      if (strcmp(arg[iarg + 1], "fixed") == 0) {
+        if (iarg + 5 > narg)
+          utils::missing_cmd_args(FLERR, "pair_style nematic/angle/soft normal fixed", error);
+        for (int k = 0; k < 3; k++) normal_vec[k] = utils::numeric(FLERR, arg[iarg + 2 + k], false, lmp);
+        const double len = sqrt(normal_vec[0] * normal_vec[0] + normal_vec[1] * normal_vec[1] +
+                                normal_vec[2] * normal_vec[2]);
+        if (len == 0.0) error->all(FLERR, "Pair style nematic/angle/soft: fixed normal is zero");
+        for (int k = 0; k < 3; k++) normal_vec[k] /= len;
+        normal_fixed = 1;
+        iarg += 5;
+      } else {
+        normal_fixed = 0;
+        name_normal = arg[iarg + 1];
+        if (utils::strmatch(name_normal, "^d2_")) name_normal = name_normal.substr(3);
+        iarg += 2;
+      }
+    } else {
+      error->all(FLERR, "Unknown keyword {} for pair_style nematic/angle/soft", arg[iarg]);
+    }
   }
   if (allocated)
     for (int i = 1; i <= atom->ntypes; i++)
@@ -150,6 +184,15 @@ void PairNematicSoft::init_style()
     error->all(FLERR, "Pair style nematic/angle/soft requires atom attributes mu and torque");
   if (intermol_flag && !atom->molecule_flag)
     error->all(FLERR, "Pair style nematic/angle/soft intermol requires molecule IDs");
+  if (!normal_fixed) {
+    int flag, cols, ghost;
+    const int index = atom->find_custom_ghost(name_normal.c_str(), flag, cols, ghost);
+    if (index < 0 || flag != 1 || cols != 3 || !ghost)
+      error->all(FLERR,
+                 "Pair style nematic/angle/soft needs a 3-column per-atom array d2_{} with ghost "
+                 "values as surface normal (e.g. from pair harmonic/surface/avg) or 'normal fixed'",
+                 name_normal);
+  }
   neighbor->add_request(this);
 }
 
@@ -185,6 +228,13 @@ void PairNematicSoft::compute(int eflag, int vflag)
   const int newton_pair = force->newton_pair;
   double *special_lj = force->special_lj;
 
+  double **normal = nullptr;
+  if (!normal_fixed) {
+    int flag, cols;
+    normal = atom->darray[atom->find_custom(name_normal.c_str(), flag, cols)];
+  }
+  constexpr double LMIN = 1.0e-2;    // smallest |mu'| (unit mu) with a defined angle
+
   const int inum = list->inum;
   int *ilist = list->ilist;
   int *numneigh = list->numneigh;
@@ -211,6 +261,39 @@ void PairNematicSoft::compute(int eflag, int vflag)
       const double rsq = delx * delx + dely * dely + delz * delz;
       if (rsq >= cutsq[itype][jtype] || rsq == 0.0) continue;
 
+      // common surface normal of the pair
+      double n[3];
+      if (normal_fixed) {
+        n[0] = normal_vec[0];
+        n[1] = normal_vec[1];
+        n[2] = normal_vec[2];
+      } else {
+        n[0] = normal[i][0] + normal[j][0];
+        n[1] = normal[i][1] + normal[j][1];
+        n[2] = normal[i][2] + normal[j][2];
+        const double nlen = sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        if (nlen < 1.0e-8) continue;
+        n[0] /= nlen;
+        n[1] /= nlen;
+        n[2] /= nlen;
+      }
+
+      // dipoles projected on the tangent plane (dipoles are unit vectors)
+      const double mui_n = mu[i][0] * n[0] + mu[i][1] * n[1] + mu[i][2] * n[2];
+      const double muj_n = mu[j][0] * n[0] + mu[j][1] * n[1] + mu[j][2] * n[2];
+      double pi[3], pj[3];
+      for (int k = 0; k < 3; k++) {
+        pi[k] = mu[i][k] - mui_n * n[k];
+        pj[k] = mu[j][k] - muj_n * n[k];
+      }
+      const double li = sqrt(pi[0] * pi[0] + pi[1] * pi[1] + pi[2] * pi[2]);
+      const double lj = sqrt(pj[0] * pj[0] + pj[1] * pj[1] + pj[2] * pj[2]);
+      if (li < LMIN || lj < LMIN) continue;
+      for (int k = 0; k < 3; k++) {
+        pi[k] /= li;
+        pj[k] /= lj;
+      }
+
       const double r = sqrt(rsq);
       const double rc = cut[itype][jtype];
       const double Aij = Aamp[itype][jtype];
@@ -219,9 +302,10 @@ void PairNematicSoft::compute(int eflag, int vflag)
       const double c0ij = c0[itype][jtype];
       const double s0ij = s0[itype][jtype];
 
-      // unit dipoles in the xy plane
-      const double c = mu[i][0] * mu[j][0] + mu[i][1] * mu[j][1];
-      const double s = mu[i][0] * mu[j][1] - mu[i][1] * mu[j][0];
+      const double c = pi[0] * pj[0] + pi[1] * pj[1] + pi[2] * pj[2];
+      const double s = n[0] * (pi[1] * pj[2] - pi[2] * pj[1]) +
+                       n[1] * (pi[2] * pj[0] - pi[0] * pj[2]) +
+                       n[2] * (pi[0] * pj[1] - pi[1] * pj[0]);
       const double sm = s * c0ij - c * s0ij;    // sin(theta - theta0)
       const double sp = s * c0ij + c * s0ij;    // sin(theta + theta0)
       const double em = exp(-2.0 * kij * sm * sm);
@@ -236,24 +320,34 @@ void PairNematicSoft::compute(int eflag, int vflag)
       const double fpair = -factor_lj * dSdr * U / r;
       const double fx = fpair * delx, fy = fpair * dely, fz = fpair * delz;
 
-      // dU/dtheta with theta = angle from mu_i to mu_j (c = cos, s = sin of theta)
+      // dU/dtheta, theta = angle from mu_i' to mu_j' about n
       const double cm = c * c0ij + s * s0ij;    // cos(theta - theta0)
       const double cp = c * c0ij - s * s0ij;    // cos(theta + theta0)
       const double dfm = 4.0 * kij * em * sm * cm;
       const double dfp = 4.0 * kij * ep * sp * cp;
-      const double dUdtheta = (Aij - Amin_ij) * (dfm * (1.0 - ep) + (1.0 - em) * dfp);
-      // E depends on theta_j - theta_i: torque_i = +dE/dtheta, torque_j = -dE/dtheta
-      const double tau = factor_lj * Sr * dUdtheta;
+      const double tau = factor_lj * Sr * (Aij - Amin_ij) * (dfm * (1.0 - ep) + (1.0 - em) * dfp);
+
+      // E depends on theta_j - theta_i. Torque on a dipole = mu x (-dE/dmu) with
+      // dtheta_k/dmu_k = (n x p_k) / l_k: tau [n - (mu_k.n)/l_k p_k] for i, minus that for j
+      double ti[3], tj[3];
+      for (int k = 0; k < 3; k++) {
+        ti[k] = tau * (n[k] - mui_n / li * pi[k]);
+        tj[k] = -tau * (n[k] - muj_n / lj * pj[k]);
+      }
 
       f[i][0] += fx;
       f[i][1] += fy;
       f[i][2] += fz;
-      torque[i][2] += tau;
+      torque[i][0] += ti[0];
+      torque[i][1] += ti[1];
+      torque[i][2] += ti[2];
       if (newton_pair || j < nlocal) {
         f[j][0] -= fx;
         f[j][1] -= fy;
         f[j][2] -= fz;
-        torque[j][2] -= tau;
+        torque[j][0] += tj[0];
+        torque[j][1] += tj[1];
+        torque[j][2] += tj[2];
       }
 
       if (evflag) {
