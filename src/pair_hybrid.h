@@ -54,6 +54,8 @@ class PairHybrid : public Pair {
   void read_restart(FILE *) override;
   double single(int, int, int, int, double, double, double, double &) override;
   void born_matrix(int, int, int, int, double, double, double, double &, double &) override;
+  double single_orientation(int, int, double, int, const double *, const double *, const double *,
+                            const double *) override;
 
   void modify_params(int narg, char **arg) override;
   double memory_usage() override;

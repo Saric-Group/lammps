@@ -35,6 +35,9 @@ class PairNematicSoft : public Pair {
   void coeff(int, char **) override;
   void init_style() override;
   double init_one(int, int) override;
+  void *extract(const char *, int &) override;
+  double single_orientation(int, int, double, int, const double *, const double *, const double *,
+                            const double *) override;
 
  protected:
   double cut_global;

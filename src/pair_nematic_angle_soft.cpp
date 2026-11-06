@@ -54,6 +54,7 @@ PairNematicSoft::PairNematicSoft(LAMMPS *lmp) :
     theta0(nullptr), cut(nullptr), c0(nullptr), s0(nullptr)
 {
   single_enable = 0;
+  orientation_flag = 1;
   restartinfo = 0;
   normal_vec[0] = normal_vec[1] = normal_vec[2] = 0.0;
 }
@@ -210,6 +211,73 @@ double PairNematicSoft::init_one(int i, int j)
   c0[i][j] = c0[j][i] = cos(theta0[i][j]);
   s0[i][j] = s0[j][i] = sin(theta0[i][j]);
   return cut[i][j];
+}
+
+/* ----------------------------------------------------------------------
+   @FelixWodaczek/dipole3d name of the per-atom normal array (without d2_) for fix bond/react
+   energy_check, nullptr with 'normal fixed'
+------------------------------------------------------------------------- */
+
+void *PairNematicSoft::extract(const char *str, int &dim)
+{
+  dim = 0;
+  if (strcmp(str, "orientation_normal_name") == 0 && !normal_fixed) return (void *) &name_normal;
+  return nullptr;
+}
+
+/* ----------------------------------------------------------------------
+   @FelixWodaczek/dipole3d energy of a pair for fix bond/react energy_check: same energy as compute()
+   (atoms without dipole, pairs with cancelling normals or a dipole along n give 0)
+   n_i, n_j are the surface normals of the atoms (ignored with 'normal fixed')
+   the molecule gate of 'intermol' is up to the caller
+------------------------------------------------------------------------- */
+
+double PairNematicSoft::single_orientation(int itype, int jtype, double rsq, int special_order,
+                                           const double *mu_i, const double *mu_j, const double *n_i,
+                                           const double *n_j)
+{
+  constexpr double LMIN = 1.0e-2;
+  if (!mu_i || !mu_j || mu_i[3] <= 0.0 || mu_j[3] <= 0.0) return 0.0;
+  if (rsq >= cutsq[itype][jtype] || rsq == 0.0) return 0.0;
+
+  double n[3];
+  if (normal_fixed) {
+    for (int k = 0; k < 3; k++) n[k] = normal_vec[k];
+  } else {
+    if (!n_i || !n_j) return 0.0;
+    for (int k = 0; k < 3; k++) n[k] = n_i[k] + n_j[k];
+    const double nlen = sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    if (nlen < 1.0e-8) return 0.0;
+    for (int k = 0; k < 3; k++) n[k] /= nlen;
+  }
+
+  const double mui_n = mu_i[0] * n[0] + mu_i[1] * n[1] + mu_i[2] * n[2];
+  const double muj_n = mu_j[0] * n[0] + mu_j[1] * n[1] + mu_j[2] * n[2];
+  double pi[3], pj[3];
+  for (int k = 0; k < 3; k++) {
+    pi[k] = mu_i[k] - mui_n * n[k];
+    pj[k] = mu_j[k] - muj_n * n[k];
+  }
+  const double li = sqrt(pi[0] * pi[0] + pi[1] * pi[1] + pi[2] * pi[2]);
+  const double lj = sqrt(pj[0] * pj[0] + pj[1] * pj[1] + pj[2] * pj[2]);
+  if (li < LMIN || lj < LMIN) return 0.0;
+  for (int k = 0; k < 3; k++) {
+    pi[k] /= li;
+    pj[k] /= lj;
+  }
+
+  const double rc = cut[itype][jtype];
+  const double Aij = Aamp[itype][jtype];
+  const double Amin_ij = Amin[itype][jtype];
+  const double kij = kappa[itype][jtype];
+  const double c = pi[0] * pj[0] + pi[1] * pj[1] + pi[2] * pj[2];
+  const double s = n[0] * (pi[1] * pj[2] - pi[2] * pj[1]) + n[1] * (pi[2] * pj[0] - pi[0] * pj[2]) +
+      n[2] * (pi[0] * pj[1] - pi[1] * pj[0]);
+  const double sm = s * c0[itype][jtype] - c * s0[itype][jtype];
+  const double sp = s * c0[itype][jtype] + c * s0[itype][jtype];
+  const double U = Amin_ij + (Aij - Amin_ij) * (1.0 - exp(-2.0 * kij * sm * sm)) *
+      (1.0 - exp(-2.0 * kij * sp * sp));
+  return force->special_lj[special_order] * (1.0 + cos(M_PI * sqrt(rsq) / rc)) * U;
 }
 
 /* ---------------------------------------------------------------------- */
