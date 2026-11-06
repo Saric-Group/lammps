@@ -25,7 +25,6 @@ Contributing Author: Jacob Gissinger (jgissing@stevens.edu)
 #include "domain.h"
 #include "error.h"
 #include "fix_bond_history.h"
-#include "fix_chain_index.h"
 #include "force.h"
 #include "group.h"
 #include "input.h"
@@ -56,6 +55,30 @@ Contributing Author: Jacob Gissinger (jgissing@stevens.edu)
 using namespace LAMMPS_NS;
 using namespace FixConst;
 using namespace MathConst;
+
+// per-atom chain index i_chain_index (ghost yes), shared with fix chain/index and fix nucleate:
+// use an existing property or create it under the fix ID CHAIN_INDEX_PROPERTY.
+// Kept local (no dependency on fix_chain_index.h), the same code is in fix_chain_index.cpp
+static int find_or_create_chain_index_property(LAMMPS *lmp)
+{
+  int flag, cols, ghost;
+  int index = lmp->atom->find_custom_ghost("chain_index", flag, cols, ghost);
+  if (index >= 0) {
+    if (flag != 0 || cols != 0)
+      lmp->error->all(FLERR, "Per-atom property chain_index must be an integer vector (i_chain_index)");
+    if (!ghost)
+      lmp->error->all(FLERR, "Per-atom property i_chain_index must be defined with ghost yes");
+    return index;
+  }
+  Fix *property = lmp->modify->add_fix("CHAIN_INDEX_PROPERTY all property/atom i_chain_index ghost yes");
+  index = lmp->atom->find_custom("chain_index", flag, cols);
+  // keep values restored from a restart file
+  if (!property->restart_reset) {
+    int *chain_index = lmp->atom->ivector[index];
+    for (int i = 0; i < lmp->atom->nlocal; i++) chain_index[i] = -1;
+  }
+  return index;
+}
 
 static const char cite_fix_bond_react[] =
     "fix bond/react: reacter.org doi:10.1016/j.polymer.2017.09.038, "
@@ -1068,7 +1091,7 @@ it will have the name 'i_limit_tags' and will be intitialized to 0 (not in group
 void FixBondReact::post_constructor()
 {
   // @FelixWodaczek/chain-index per-atom chain index, shared with fix chain/index and fix nucleate
-  if (chain_index_anyflag) chain_index_property = FixChainIndex::find_or_create_property(lmp);
+  if (chain_index_anyflag) chain_index_property = find_or_create_chain_index_property(lmp);
 
   // let's add the limit_tags per-atom property fix
   id_fix2 = utils::strdup("bond_react_props_internal");
