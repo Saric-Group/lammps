@@ -15,11 +15,16 @@
    Direction of treadmilling filaments from their bond topology, and
    per-atom counts of parallel and anti-parallel neighbours.
 
-   The direction of a bond is the order in which it is stored: with
-   newton_bond on, every bond lives on its first atom and the bond list
-   holds it as (atom1, atom2), so the data and molecule files define the
-   direction. bacterial_septation writes all filament bonds from the
-   shrinking end (type 2) to the growing end (type 3).
+   orient bond_order: the direction of a bond is the order in which it is
+   stored. With newton_bond on, every bond lives on its first atom and the
+   bond list holds it as (atom1, atom2), so the data and molecule files
+   define the direction. bacterial_septation writes all filament bonds from
+   the shrinking end (type 2) to the growing end (type 3).
+
+   orient chain_index: a bond points from the atom with the lower to the
+   atom with the higher per-atom chain index (i_chain_index, maintained by
+   fix chain/index and fix bond/react ... chain_index), independent of the
+   storage order and of newton_bond.
 
    side: with a per-atom surface normal n (e.g. d2_avg_nvecs of pair
    harmonic/surface/avg), every bead gets the in-plane unit vector
@@ -58,7 +63,7 @@ static constexpr double NO_NEIGHBOUR = 2.0;    // cosmin of atoms without a coun
 
 FixFilamentDirection::FixFilamentDirection(LAMMPS *lmp, int narg, char **arg) :
     Fix(lmp, narg, arg), last_respa_step(-1), bondtype_flag(nullptr), type_flag(nullptr), normal(nullptr), id_props(nullptr), dir(nullptr), nbond(nullptr),
-    npar(nullptr), nanti(nullptr), cosmin(nullptr), left(nullptr), nll(nullptr), nrr(nullptr), list(nullptr)
+    npar(nullptr), nanti(nullptr), cosmin(nullptr), left(nullptr), nll(nullptr), nrr(nullptr), chain_index(nullptr), list(nullptr)
 {
   if (narg < 4) utils::missing_cmd_args(FLERR, "fix filament/direction", error);
   if (!atom->molecular) error->all(FLERR, "Fix filament/direction requires a molecular system");
@@ -116,6 +121,8 @@ FixFilamentDirection::FixFilamentDirection(LAMMPS *lmp, int narg, char **arg) :
       if (iarg + 2 > narg) utils::missing_cmd_args(FLERR, "fix filament/direction orient", error);
       if (strcmp(arg[iarg + 1], "bond_order") == 0)
         orient = BOND_ORDER;
+      else if (strcmp(arg[iarg + 1], "chain_index") == 0)
+        orient = CHAIN_INDEX;
       else
         error->all(FLERR, "Unknown fix filament/direction orient value: {}", arg[iarg + 1]);
       iarg += 2;
@@ -274,6 +281,19 @@ void FixFilamentDirection::init()
     error->all(FLERR,
                "Fix filament/direction with orient bond_order requires newton_bond on: "
                "only then is a bond stored on its first atom");
+  if (orient == CHAIN_INDEX) {
+    int flag, cols;
+    if (atom->find_custom("chain_index", flag, cols) < 0)
+      error->all(FLERR,
+                 "Fix filament/direction orient chain_index needs the per-atom property i_chain_index "
+                 "(fix chain/index or fix bond/react ... chain_index)");
+    // fix chain/index has to relabel before the directions are computed
+    const auto relabellers = modify->get_fix_by_style("^chain/index$");
+    for (const auto *relabeller : relabellers)
+      if (modify->find_fix(relabeller->id) > modify->find_fix(id))
+        error->all(FLERR, "Fix chain/index {} must be defined before fix filament/direction {}",
+                   relabeller->id, id);
+  }
   if (mu_flag && !atom->mu_flag)
     error->all(FLERR, "Fix filament/direction mu yes requires an atom style with dipoles");
   if (side_flag) find_normal();
@@ -306,13 +326,14 @@ void FixFilamentDirection::setup_pre_force(int /*vflag*/)
   compute();
 }
 
-// a dynamic group gets its members in FixGroup::setup(), after setup_pre_force(),
-// so recompute once it is set (fixes are set up in the order they were defined).
+// a dynamic group gets its members in FixGroup::setup(), after setup_pre_force(), and
+// fix chain/index relabels in its setup() for a dynamic group, so recompute once both
+// are done (fixes are set up in the order they were defined).
 // with side, the normals of a pair style are only computed with the setup forces,
 // after setup_pre_force(), so recompute for them too
 void FixFilamentDirection::setup(int /*vflag*/)
 {
-  if (group->dynamic[igroup] || side_flag) compute();
+  if (group->dynamic[igroup] || orient == CHAIN_INDEX || side_flag) compute();
 }
 
 void FixFilamentDirection::pre_force(int /*vflag*/)
@@ -346,6 +367,10 @@ void FixFilamentDirection::pre_force_respa(int vflag, int /*ilevel*/, int /*iloo
 void FixFilamentDirection::compute()
 {
   find_properties();
+  if (orient == CHAIN_INDEX) {
+    int flag, cols;
+    chain_index = atom->ivector[atom->find_custom("chain_index", flag, cols)];
+  }
   if (side_flag) find_normal();
   compute_direction();
   if (cutoff > 0.0) compute_alignment();
@@ -356,10 +381,16 @@ void FixFilamentDirection::compute()
    it points the other way, 0 if its direction is unknown
 ------------------------------------------------------------------------- */
 
-int FixFilamentDirection::bond_sign(int /*i0*/, int /*i1*/)
+int FixFilamentDirection::bond_sign(int i0, int i1)
 {
   // orient bond_order: the bond list holds bonds as (atom1, atom2)
-  return 1;
+  if (orient == BOND_ORDER) return 1;
+
+  // orient chain_index: from the lower to the higher index, unknown for unlabelled atoms
+  // and for side beads that share the index of their backbone bead
+  const int c0 = chain_index[i0], c1 = chain_index[i1];
+  if (c0 < 0 || c1 < 0 || c0 == c1) return 0;
+  return (c1 > c0) ? 1 : -1;
 }
 
 /* ----------------------------------------------------------------------
