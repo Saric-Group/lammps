@@ -56,6 +56,7 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
   hydrolysis_owner = false; // lifetime tracking
   lifetime_flag = LIFETIME_OFF; // lifetime tracking
   chain_index_flag = 0; // chain index of inserted dimers
+  mu_flag = 0;
 
   // parse kwargs
   while (iarg < narg) {
@@ -144,6 +145,13 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
       if (iarg + 2 > narg) error->all(FLERR, "Illegal fix nucleate command: "
                                     "'chain_index' keyword has too few arguments");
       chain_index_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
+      iarg += 2;
+    } else if (strcmp(arg[iarg], "mu") == 0) {
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix nucleate command: "
+                                    "'mu' keyword has too few arguments");
+      mu_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
+      if (mu_flag && !atom->mu_flag)
+        error->all(FLERR, "Fix nucleate: 'mu yes' requires atom attribute mu");
       iarg += 2;
     } else {
       error->all(FLERR, "Illegal fix nucleate command.");
@@ -443,6 +451,19 @@ void FixNucleate::post_integrate() {
       atom->image[newind] = ((imageint) IMGMAX << IMG2BITS) |
           ((imageint) IMGMAX << IMGBITS) | IMGMAX;
       modify->create_attribute(newind);
+    }
+
+    // @FelixWodaczek/dipole3d unit dipole of both atoms along the bond from tail to head
+    if (mu_flag) {
+      double **xn = atom->x;
+      const int tail = atom->nlocal - 2, head = atom->nlocal - 1;
+      double d[3] = {xn[head][0] - xn[tail][0], xn[head][1] - xn[tail][1], xn[head][2] - xn[tail][2]};
+      domain->minimum_image(FLERR, d[0], d[1], d[2]);
+      const double dlen = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+      for (int newind = tail; newind <= head; newind++) {
+        for (int k = 0; k < 3; k++) atom->mu[newind][k] = (dlen > 0.0) ? d[k] / dlen : 0.0;
+        atom->mu[newind][3] = (dlen > 0.0) ? 1.0 : 0.0;
+      }
     }
 
     my_insertions++;
