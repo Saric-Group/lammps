@@ -51,6 +51,7 @@ class FixNucleate : public Fix {
     int insert_types[2]; // atom types of inserted dimer
     std::vector<int> overlap_except; // per atom type: 1 if ignored in the overlap check
     int noffset; // run at timestep + noffset to avoid clashes with eg. bond/react
+    int mu_flag; // @FelixWodaczek/dipole3d set the dipole of both atoms of an inserted dimer along its bond (tail to head)
     int chain_index_flag; // @FelixWodaczek/chain-index set i_chain_index of inserted dimers to 0 (tail) and 1 (head)
 
     // lifetime tracking flags and variables
