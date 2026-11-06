@@ -20,11 +20,34 @@
 #include "variable.h"
 
 #include <set>
-#include "fix_chain_index.h"
 #include <cstring>
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
+
+// per-atom chain index i_chain_index (ghost yes), shared with fix chain/index and fix nucleate:
+// use an existing property or create it under the fix ID CHAIN_INDEX_PROPERTY.
+// Kept local (no dependency on fix_chain_index.h), the same code is in fix_chain_index.cpp
+static int find_or_create_chain_index_property(LAMMPS *lmp)
+{
+  int flag, cols, ghost;
+  int index = lmp->atom->find_custom_ghost("chain_index", flag, cols, ghost);
+  if (index >= 0) {
+    if (flag != 0 || cols != 0)
+      lmp->error->all(FLERR, "Per-atom property chain_index must be an integer vector (i_chain_index)");
+    if (!ghost)
+      lmp->error->all(FLERR, "Per-atom property i_chain_index must be defined with ghost yes");
+    return index;
+  }
+  Fix *property = lmp->modify->add_fix("CHAIN_INDEX_PROPERTY all property/atom i_chain_index ghost yes");
+  index = lmp->atom->find_custom("chain_index", flag, cols);
+  // keep values restored from a restart file
+  if (!property->restart_reset) {
+    int *chain_index = lmp->atom->ivector[index];
+    for (int i = 0; i < lmp->atom->nlocal; i++) chain_index[i] = -1;
+  }
+  return index;
+}
 
 enum { WARN, NOWARN }; // warnflag values
 
@@ -194,7 +217,7 @@ void FixNucleate::post_constructor() {
   random = new RanMars(lmp, seed + comm->me);
 
   // per-atom chain index, shared with fix chain/index and fix bond/react
-  if (chain_index_flag) FixChainIndex::find_or_create_property(lmp);
+  if (chain_index_flag) find_or_create_chain_index_property(lmp);
 
   if (lifetime_flag) {
     // create an atom property to store the lifetime of atoms
