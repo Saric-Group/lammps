@@ -42,6 +42,7 @@ PairHybrid::PairHybrid(LAMMPS *lmp) :
 
   outerflag = 0;
   respaflag = 0;
+  orientation_flag = 1;    // @FelixWodaczek/dipole3d single_orientation() sums the sub-styles that have it
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1166,6 +1167,32 @@ void *PairHybrid::extract(const char *str, int &dim)
 void PairHybrid::reset_dt()
 {
   for (int m = 0; m < nstyles; m++) styles[m]->reset_dt();
+}
+
+/* ----------------------------------------------------------------------
+   @FelixWodaczek/dipole3d energy of a pair from the sub-styles that implement single_orientation(),
+   each with its own special_bonds factors (pair_modify special); other sub-styles are not included
+------------------------------------------------------------------------- */
+
+double PairHybrid::single_orientation(int itype, int jtype, double rsq, int special_order,
+                                      const double *mu_i, const double *mu_j, const double *n_i,
+                                      const double *n_j)
+{
+  if (nmap[itype][jtype] == 0)
+    error->one(FLERR,"Invoked pair single_orientation on pair style none");
+
+  double esum = 0.0;
+  double saved_lj[4];
+  for (int k = 0; k < 4; k++) saved_lj[k] = force->special_lj[k];
+  for (int m = 0; m < nmap[itype][jtype]; m++) {
+    Pair *sub = styles[map[itype][jtype][m]];
+    if (!sub->orientation_flag || rsq >= sub->cutsq[itype][jtype]) continue;
+    if (special_lj[map[itype][jtype][m]])
+      for (int k = 0; k < 4; k++) force->special_lj[k] = special_lj[map[itype][jtype][m]][k];
+    esum += sub->single_orientation(itype,jtype,rsq,special_order,mu_i,mu_j,n_i,n_j);
+    for (int k = 0; k < 4; k++) force->special_lj[k] = saved_lj[k];
+  }
+  return esum;
 }
 
 /* ----------------------------------------------------------------------
