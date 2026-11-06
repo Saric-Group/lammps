@@ -84,8 +84,12 @@ class FixBondReact : public Fix {
   // @FelixWodaczek/dipole3d dipole mu of the created atoms
   int *mu_mode;                                      // MU_NONE, MU_GROW (copy of the head), MU_NUCLEATE (bond direction)
   int mu_anyflag;                                    // 1 if any reaction sets the dipoles of created atoms
-  int mu_cuff;                                       // first of 4 mega_glove rows that carry mu of the head
-  double **mu_values;                                // mu (x,y,z,length) of the head of each reaction in update_everything()
+  int mu_cuff;                                       // first of 7 mega_glove rows that carry mu and normal of the head
+  double **mu_values;                                // mu (x,y,z,length) and normal (x,y,z) of the head, per reaction in update_everything()
+  std::vector<std::string> normal_name;              // 'normal_copy': per-atom d2_ array of the surface normal copied from the head
+  // energy_check: Metropolis acceptance of the created atoms on their orientation-dependent pair energy
+  double *energy_temp;                               // temperature, < 0: no check
+  double *energy_bias;                               // insertions below the bias are always accepted
   int mu_grow_warned;                                // warned about growth without a head dipole
   int custom_exclude_flag;
   int **rate_limit;
@@ -235,7 +239,8 @@ class FixBondReact : public Fix {
   double get_temperature(tagint **, int, int);
   double get_totalcharge();
   double get_chain_value(int); // @FelixWodaczek/chain-index
-  void get_mu_head(int, double *); // @FelixWodaczek/dipole3d
+  void get_mu_head(int, double *);
+  int insert_energy_reject(double **, double **, double **, const std::vector<tagint> &, int, tagint *); // @FelixWodaczek/dipole3d
   void customvarnames();    // get per-atom variables names used by custom constraint
   void get_customvars();    // evaluate local values for variables names used by custom constraint
   double custom_constraint(const std::string &);    // evaulate expression for custom constraint
@@ -257,6 +262,8 @@ class FixBondReact : public Fix {
   void ghost_glovecast();
   void update_everything();
   int insert_atoms_setup(tagint **, int);
+  int insert_energy_reject(double **, double **, double **, tagint **, int, int, const tagint *);
+  int template_special_order(int, int);
   void unlimit_bond(); // removes atoms from stabilization, and other post-reaction every-step operations
   void dedup_mega_gloves(int);    //dedup global mega_glove
   void write_restart(FILE *) override;
@@ -292,6 +299,8 @@ class FixBondReact : public Fix {
     int type, mask;
     int chain_index; // @FelixWodaczek/chain-index
     double mu[4];    // @FelixWodaczek/dipole3d
+    double normal[3];
+    int rxn;
     imageint image;
     double rmass, x[3], v[3];
   };

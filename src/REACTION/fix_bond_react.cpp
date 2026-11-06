@@ -312,6 +312,9 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
   chain_modulo = 1;
   chain_values = nullptr;
   memory->create(mu_mode,nreacts,"bond/react:mu_mode"); // @FelixWodaczek/dipole3d
+  memory->create(energy_temp,nreacts,"bond/react:energy_temp");
+  memory->create(energy_bias,nreacts,"bond/react:energy_bias");
+  normal_name.assign(nreacts,"");
   mu_anyflag = 0;
   mu_cuff = -1;
   mu_values = nullptr;
@@ -345,6 +348,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     reaction_count_total[i] = 0;
     chain_mode[i] = CHAIN_NONE;
     mu_mode[i] = MU_NONE;
+    energy_temp[i] = -1.0;
+    energy_bias[i] = 0.0;
     for (int j = 0; j < NUMVARVALS; j++) {
       var_flag[j][i] = 0;
       var_id[j][i] = 0;
@@ -487,6 +492,16 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
         // the head is the template atom with the largest chain index
         if (mu_mode[rxn] == MU_GROW) chain_index_anyflag = 1;
         iarg += 2;
+      } else if (strcmp(arg[iarg],"normal_copy") == 0) {
+        // @FelixWodaczek/dipole3d normal_copy none|d2_name: the created atoms get the surface normal of the head
+        if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
+                                      "'normal_copy' has too few arguments");
+        if (strcmp(arg[iarg+1],"none") == 0) normal_name[rxn] = "";
+        else {
+          normal_name[rxn] = arg[iarg+1];
+          if (utils::strmatch(normal_name[rxn],"^d2_")) normal_name[rxn] = normal_name[rxn].substr(3);
+        }
+        iarg += 2;
       } else if (strcmp(arg[iarg],"custom_charges") == 0) {
         if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                       "'custom_charges' has too few arguments");
@@ -590,6 +605,18 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
               overlapexcept[rxn][except_type] = true;
             }
             iarg += 2 + num_except_types;
+          } else if (strcmp(arg[iarg],"energy_check") == 0) {
+            // @FelixWodaczek/dipole3d energy_check T [bias E]
+            if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
+                                          "'modify_create energy_check' has too few arguments");
+            energy_temp[rxn] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
+            if (energy_temp[rxn] < 0.0)
+              error->all(FLERR,"Fix bond/react: temperature of 'energy_check' cannot be negative");
+            iarg += 2;
+            if (iarg+2 <= narg && strcmp(arg[iarg],"bias") == 0) {
+              energy_bias[rxn] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
+              iarg += 2;
+            }
           } else if (strcmp(arg[iarg],"overlap") == 0) {
             if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                           "'modify_create overlap' has too few arguments");
@@ -632,8 +659,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
 
   // @FelixWodaczek/chain-index the chain index value travels as an extra mega_glove row
   if (chain_index_anyflag) chain_cuff = cuff++;
-  // @FelixWodaczek/dipole3d mu (x,y,z,length) of the head travels in 4 extra mega_glove rows
-  if (mu_anyflag) { mu_cuff = cuff; cuff += 4; }
+  // @FelixWodaczek/dipole3d mu (x,y,z,length) of the head travels in 7 extra mega_glove rows
+  if (mu_anyflag) { mu_cuff = cuff; cuff += 7; }
 
   max_natoms = 0; // the number of atoms in largest molecule template
   max_rate_limit_steps = 0;
@@ -954,7 +981,9 @@ FixBondReact::~FixBondReact()
   memory->destroy(type_overlapsq);
   memory->destroy(ignore_own_molecule);
   memory->destroy(chain_mode); // @FelixWodaczek/chain-index
-  memory->destroy(mu_mode);    // @FelixWodaczek/dipole3d
+  memory->destroy(mu_mode);
+  memory->destroy(energy_temp);
+  memory->destroy(energy_bias);    // @FelixWodaczek/dipole3d
 
   memory->destroy(iatomtype);
   memory->destroy(jatomtype);
@@ -1723,9 +1752,9 @@ void FixBondReact::superimpose_algorithm()
             if (rescale_charges_flag[rxnID]) my_mega_glove[1][my_num_mega] = get_totalcharge();
             if (chain_index_anyflag) my_mega_glove[chain_cuff][my_num_mega] = get_chain_value(rxnID);
             if (mu_anyflag) {
-              double muhead[4];
+              double muhead[7];
               get_mu_head(rxnID,muhead);
-              for (int k = 0; k < 4; k++) my_mega_glove[mu_cuff+k][my_num_mega] = muhead[k];
+              for (int k = 0; k < 7; k++) my_mega_glove[mu_cuff+k][my_num_mega] = muhead[k];
             }
             for (int i = 0; i < onemol->natoms; i++) {
               my_mega_glove[i+cuff][my_num_mega] = (double) glove[i][1];
@@ -1778,9 +1807,9 @@ void FixBondReact::superimpose_algorithm()
             if (rescale_charges_flag[rxnID]) my_mega_glove[1][my_num_mega] = get_totalcharge();
             if (chain_index_anyflag) my_mega_glove[chain_cuff][my_num_mega] = get_chain_value(rxnID);
             if (mu_anyflag) {
-              double muhead[4];
+              double muhead[7];
               get_mu_head(rxnID,muhead);
-              for (int k = 0; k < 4; k++) my_mega_glove[mu_cuff+k][my_num_mega] = muhead[k];
+              for (int k = 0; k < 7; k++) my_mega_glove[mu_cuff+k][my_num_mega] = muhead[k];
             }
             for (int i = 0; i < onemol->natoms; i++) {
               my_mega_glove[i+cuff][my_num_mega] = (double) glove[i][1];
@@ -2638,7 +2667,7 @@ none or it has no dipole
 
 void FixBondReact::get_mu_head(int myrxn, double *out)
 {
-  out[0] = out[1] = out[2] = out[3] = 0.0;
+  for (int k = 0; k < 7; k++) out[k] = 0.0;
   if (mu_mode[myrxn] != MU_GROW) return;
 
   int *chain_index = atom->ivector[chain_index_property];
@@ -2654,6 +2683,13 @@ void FixBondReact::get_mu_head(int myrxn, double *out)
   }
   if (head < 0) return;
   for (int k = 0; k < 4; k++) out[k] = atom->mu[head][k];
+  if (!normal_name[myrxn].empty()) {
+    int flag, cols;
+    const int index = atom->find_custom(normal_name[myrxn].c_str(),flag,cols);
+    if (index < 0 || flag != 1 || cols != 3)
+      error->one(FLERR,"Fix bond/react: 'normal_copy' needs a 3-column per-atom array d2_{}",normal_name[myrxn]);
+    for (int k = 0; k < 3; k++) out[4+k] = atom->darray[index][head][k];
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -3514,7 +3550,7 @@ void FixBondReact::update_everything()
   double *sim_total_charges;
   if (rescale_charges_anyflag) memory->create(sim_total_charges,maxmega,"bond/react:sim_total_charges");
   if (chain_index_anyflag) memory->create(chain_values,maxmega,"bond/react:chain_values");
-  if (mu_anyflag) memory->create(mu_values,maxmega,4,"bond/react:mu_values");
+  if (mu_anyflag) memory->create(mu_values,maxmega,7,"bond/react:mu_values");
 
   for (int pass = 0; pass < 2; pass++) {
     update_num_mega = 0;
@@ -3533,7 +3569,7 @@ void FixBondReact::update_everything()
           update_mega_glove[j+1][update_num_mega] = (tagint) local_mega_glove[j+cuff][i];
         if (chain_index_anyflag) chain_values[update_num_mega] = local_mega_glove[chain_cuff][i];
         if (mu_anyflag)
-          for (int k = 0; k < 4; k++) mu_values[update_num_mega][k] = local_mega_glove[mu_cuff+k][i];
+          for (int k = 0; k < 7; k++) mu_values[update_num_mega][k] = local_mega_glove[mu_cuff+k][i];
 
         // atoms inserted here for serial MPI_STUBS build only
         if (create_atoms_flag[rxnID] == 1) {
@@ -3561,7 +3597,7 @@ void FixBondReact::update_everything()
           update_mega_glove[j+1][update_num_mega] = (tagint) global_mega_glove[j+cuff][i];
         if (chain_index_anyflag) chain_values[update_num_mega] = global_mega_glove[chain_cuff][i];
         if (mu_anyflag)
-          for (int k = 0; k < 4; k++) mu_values[update_num_mega][k] = global_mega_glove[mu_cuff+k][i];
+          for (int k = 0; k < 7; k++) mu_values[update_num_mega][k] = global_mega_glove[mu_cuff+k][i];
 
         // we can insert atoms here, now that reactions are finalized
         // can't do it any earlier, due to skipped reactions (max_rxn)
@@ -3682,6 +3718,12 @@ void FixBondReact::update_everything()
         // @FelixWodaczek/dipole3d dipole of the created atom
         if (mu_anyflag && atom->mu) {
           for (int k = 0; k < 4; k++) atom->mu[n][k] = myaddatom.mu[k];
+        }
+        if (!normal_name[myaddatom.rxn].empty()) {
+          int nflag, ncols;
+          const int nindex = atom->find_custom(normal_name[myaddatom.rxn].c_str(),nflag,ncols);
+          if (nindex >= 0 && nflag == 1 && ncols == 3)
+            for (int k = 0; k < 3; k++) atom->darray[nindex][n][k] = myaddatom.normal[k];
         }
       }
 
@@ -4574,6 +4616,45 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
     }
   }
 
+  // @FelixWodaczek/dipole3d Metropolis check on the orientation-dependent pair energy of the created atoms
+  if (energy_temp[rxnID] >= 0.0) {
+    double **mus, **normals;
+    memory->create(mus,twomol->natoms,4,"bond/react:energy_mus");
+    memory->create(normals,twomol->natoms,3,"bond/react:energy_normals");
+    tagint *createmol = new tagint[twomol->natoms];
+    int first = -1, second = -1;
+    for (int m = 0; m < twomol->natoms; m++)
+      if (create_atoms[m][rxnID] == 1) { if (first < 0) first = m; else second = m; }
+    for (int m = 0; m < twomol->natoms; m++) {
+      for (int k = 0; k < 4; k++) mus[m][k] = 0.0;
+      for (int k = 0; k < 3; k++) normals[m][k] = 0.0;
+      createmol[m] = created_molecule(m);
+      if (create_atoms[m][rxnID] != 1) continue;
+      if (mu_mode[rxnID] == MU_GROW) {
+        for (int k = 0; k < 4; k++) mus[m][k] = mu_values[iupdate][k];
+        for (int k = 0; k < 3; k++) normals[m][k] = mu_values[iupdate][4+k];
+      } else if (mu_mode[rxnID] == MU_NUCLEATE && second >= 0) {
+        double d[3] = {coords[second][0] - coords[first][0], coords[second][1] - coords[first][1],
+                       coords[second][2] - coords[first][2]};
+        domain->minimum_image(FLERR, d[0], d[1], d[2]);
+        const double dlen = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+        if (dlen > 0.0) {
+          for (int k = 0; k < 3; k++) mus[m][k] = d[k]/dlen;
+          mus[m][3] = 1.0;
+        }
+      }
+    }
+    int reject = insert_energy_reject(coords,mus,normals,my_update_mega_glove,iupdate,fitroot,createmol);
+    memory->destroy(mus);
+    memory->destroy(normals);
+    delete [] createmol;
+    if (reject) {
+      memory->destroy(coords);
+      memory->destroy(imageflags);
+      return 0;
+    }
+  }
+
   // check if new atoms are in my sub-box or above it if I am highest proc
   // if so, add atom to my list via create_atom()
   // initialize additional info about the atoms
@@ -4622,6 +4703,7 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         root = comm->me;
 
         myaddatom.type = twomol->type[m];
+        myaddatom.rxn = rxnID;
         // @FelixWodaczek/chain-index
         myaddatom.chain_index = -1;
         if (chain_mode[rxnID] == CHAIN_GROW) {
@@ -4640,9 +4722,11 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
         }
         // @FelixWodaczek/dipole3d
         for (int k = 0; k < 4; k++) myaddatom.mu[k] = 0.0;
+        for (int k = 0; k < 3; k++) myaddatom.normal[k] = 0.0;
         if (mu_mode[rxnID] == MU_GROW) {
-          // copy of the dipole of the head the filament grows from
+          // copy of the dipole (and surface normal) of the head the filament grows from
           for (int k = 0; k < 4; k++) myaddatom.mu[k] = mu_values[iupdate][k];
+          for (int k = 0; k < 3; k++) myaddatom.normal[k] = mu_values[iupdate][4+k];
           if (myaddatom.mu[3] <= 0.0 && !mu_grow_warned) {
             mu_grow_warned = 1;
             if (comm->me == 0)
@@ -4718,6 +4802,125 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
   memory->destroy(coords);
   memory->destroy(imageflags);
   return 1;
+}
+
+/* ----------------------------------------------------------------------
+@FelixWodaczek/dipole3d special neighbour order (1,2,3 for 1-2, 1-3, 1-4, else 0) of atoms m and p
+(0-based) in the reacted template; created atoms are landlocked, so their specials are complete
+(after the energy_check of Andraz Gnidovec on feature/update-treadmilling/dipole)
+------------------------------------------------------------------------- */
+
+int FixBondReact::template_special_order(int m, int p)
+{
+  for (int k = 0; k < twomol->nspecial[m][2]; k++) {
+    if (twomol->special[m][k] == p+1) {
+      if (k < twomol->nspecial[m][0]) return 1;
+      if (k < twomol->nspecial[m][1]) return 2;
+      return 3;
+    }
+  }
+  return 0;
+}
+
+/* ----------------------------------------------------------------------
+@FelixWodaczek/dipole3d biased Metropolis criterion on the orientation-dependent pair energy of the
+created atoms with the existing atoms, the atoms pending insertion and each other:
+E = sum of Pair::single_orientation() (only the sub-styles that have it), accept if E <= bias,
+else with probability exp(-(E - bias)/kT). Atoms of the same molecule as the created atom are skipped
+with 'ignore_own_molecule' (for pair styles with intermol). Collective, the same result on all procs.
+Neither bond energies nor the sub-styles without single_orientation() (e.g. lj/cut) enter: use overlap.
+------------------------------------------------------------------------- */
+
+int FixBondReact::insert_energy_reject(double **coords, double **mus, double **normals,
+                                       tagint **my_update_mega_glove, int iupdate, int fitroot,
+                                       const tagint *createmol)
+{
+  Pair *pair = force->pair;
+  if (!pair || !pair->orientation_flag)
+    error->all(FLERR,"Fix bond/react: 'energy_check' needs a pair style with single_orientation()");
+
+  double **x = atom->x;
+  tagint *tag = atom->tag;
+  tagint *molecule = atom->molecule;
+  // surface normals of the existing atoms: the array of 'normal_copy', else the one of the pair style
+  int nflag = 0, ncols = 0, ndim = 0;
+  double **nvec = nullptr;
+  std::string nname = normal_name[rxnID];
+  if (nname.empty()) {
+    auto *pname = (std::string *) pair->extract("orientation_normal_name",ndim);
+    if (pname) nname = *pname;
+  }
+  if (!nname.empty()) {
+    const int index = atom->find_custom(nname.c_str(),nflag,ncols);
+    if (index >= 0 && nflag == 1 && ncols == 3) nvec = atom->darray[index];
+  }
+
+  double E = 0.0;
+  for (int m = 0; m < twomol->natoms; m++) {
+    if (create_atoms[m][rxnID] == 0) continue;
+    const int itype = twomol->type[m];
+
+    // existing atoms: owned atoms only, each counted once through the minimum image, summed over procs
+    for (int i = 0; i < atom->nlocal; i++) {
+      if (ignore_own_molecule[rxnID] && createmol[m] != 0 && molecule && molecule[i] == createmol[m]) continue;
+      double delx = coords[m][0] - x[i][0];
+      double dely = coords[m][1] - x[i][1];
+      double delz = coords[m][2] - x[i][2];
+      domain->minimum_image(FLERR,delx,dely,delz);
+      const double rsq = delx*delx + dely*dely + delz*delz;
+      if (rsq >= pair->cutsq[itype][atom->type[i]]) continue;
+
+      // special neighbours: only atoms of this reaction site can be
+      int order = 0;
+      for (int p = 0; p < twomol->natoms && order == 0; p++)
+        if (create_atoms[p][rxnID] == 0 &&
+            my_update_mega_glove[equivalences[p][1][rxnID]][iupdate] == tag[i])
+          order = template_special_order(m,p);
+      E += pair->single_orientation(itype,atom->type[i],rsq,order,mus[m],atom->mu ? atom->mu[i] : nullptr,
+                                    normals[m],nvec ? nvec[i] : nullptr);
+    }
+
+    // atoms pending insertion by earlier reactions of this step (stored on the proc that will own them)
+    for (auto &myaddatom : addatoms) {
+      if (ignore_own_molecule[rxnID] && createmol[m] != 0 && myaddatom.molecule == createmol[m]) continue;
+      double delx = coords[m][0] - myaddatom.x[0];
+      double dely = coords[m][1] - myaddatom.x[1];
+      double delz = coords[m][2] - myaddatom.x[2];
+      domain->minimum_image(FLERR,delx,dely,delz);
+      const double rsq = delx*delx + dely*dely + delz*delz;
+      if (rsq >= pair->cutsq[itype][myaddatom.type]) continue;
+      E += pair->single_orientation(itype,myaddatom.type,rsq,0,mus[m],myaddatom.mu,normals[m],myaddatom.normal);
+    }
+  }
+  MPI_Allreduce(MPI_IN_PLACE,&E,1,MPI_DOUBLE,MPI_SUM,world);
+
+  // created atoms with each other (coords, mus identical on all procs)
+  for (int m = 0; m < twomol->natoms; m++) {
+    if (create_atoms[m][rxnID] == 0) continue;
+    for (int m2 = m+1; m2 < twomol->natoms; m2++) {
+      if (create_atoms[m2][rxnID] == 0) continue;
+      double delx = coords[m][0] - coords[m2][0];
+      double dely = coords[m][1] - coords[m2][1];
+      double delz = coords[m][2] - coords[m2][2];
+      domain->minimum_image(FLERR,delx,dely,delz);
+      const double rsq = delx*delx + dely*dely + delz*delz;
+      if (rsq >= pair->cutsq[twomol->type[m]][twomol->type[m2]]) continue;
+      E += pair->single_orientation(twomol->type[m],twomol->type[m2],rsq,template_special_order(m,m2),
+                                    mus[m],mus[m2],normals[m],normals[m2]);
+    }
+  }
+
+  // decide on fitroot only: log-space comparison with 1-u in (0,1], NaN energies are rejected
+  const double dE = E - energy_bias[rxnID];
+  int reject = 0;
+  if (comm->me == fitroot) {
+    int accept = (dE <= 0.0);
+    if (!accept && energy_temp[rxnID] > 0.0)
+      accept = (dE / (force->boltz * energy_temp[rxnID]) < -log(1.0 - random[rxnID]->uniform()));
+    reject = !accept;
+  }
+  MPI_Bcast(&reject,1,MPI_INT,fitroot,world);
+  return reject;
 }
 
 /* ----------------------------------------------------------------------
