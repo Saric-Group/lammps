@@ -36,18 +36,24 @@ class PairHarmonicSide : public Pair {
   double single(int, int, int, int, double, double, double, double &) override;
 
  protected:
-  enum { LEFT = 1, RIGHT = -1 };
+  enum { LEFT = 1, RIGHT = -1, ANY = 0 };
 
   char *id_fix;
   class Fix *fix_direction;
   double cut_global;
   double **k, **r0, **cut;
   int **side, **nth;
-  int need_chain_index;    // 1 if any pair_coeff uses nth > 1
+  double **parallel_cos, **antiparallel_cos;    // alignment gate, 2 / -2 if unset
+  int **check_alignment;                        // 1 if parallel or antiparallel is set
+  double **lateral_cos;                         // 1 = off
+  double **region_half;                         // half width of the band |y| < w/2, -1 = off
+  int need_chain_index;                         // 1 if any pair_coeff uses nth > 1
+  int need_left;                                // 1 if any pair_coeff uses left or right
 
   void allocate();
-  void get_arrays(double **&, int *&);
-  bool active(int, int, int, int, double, double, double, double **, int *);
+  void get_arrays(double **&, double **&, int *&);
+  bool active(int, int, int, int, double, double, double, double **, double **, int *);
+  double wrapped_y(double) const;
 };
 
 }    // namespace LAMMPS_NS
