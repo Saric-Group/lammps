@@ -57,6 +57,7 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
   lifetime_flag = LIFETIME_OFF; // lifetime tracking
   chain_index_flag = 0; // chain index of inserted dimers
   mu_flag = 0;
+  rmass_new = 0.0;
 
   // parse kwargs
   while (iarg < narg) {
@@ -145,6 +146,12 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
       if (iarg + 2 > narg) error->all(FLERR, "Illegal fix nucleate command: "
                                     "'chain_index' keyword has too few arguments");
       chain_index_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
+      iarg += 2;
+    } else if (strcmp(arg[iarg], "rmass") == 0) {
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix nucleate command: "
+                                    "'rmass' keyword has too few arguments");
+      rmass_new = utils::numeric(FLERR, arg[iarg + 1], false, lmp);
+      if (rmass_new <= 0.0) error->all(FLERR, "Fix nucleate: 'rmass' must be positive");
       iarg += 2;
     } else if (strcmp(arg[iarg], "mu") == 0) {
       if (iarg + 2 > narg) error->all(FLERR, "Illegal fix nucleate command: "
@@ -446,6 +453,7 @@ void FixNucleate::post_integrate() {
     atom->avec->create_atom(insert_types[1], insert_coords[icoord]+3);
 
     for (int newind=atom->nlocal-2; newind<atom->nlocal; newind++) {
+      if (rmass_new > 0.0) atom->rmass[newind] = rmass_new;
       initialise_v(atom->v[newind], atom->rmass[newind]);
       atom->mask[newind] = 1;
       atom->image[newind] = ((imageint) IMGMAX << IMG2BITS) |
