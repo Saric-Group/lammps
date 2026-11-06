@@ -81,6 +81,12 @@ class FixBondReact : public Fix {
   int chain_modulo;                                  // modulo of fix chain/index, kept by 'shrink'
   double *chain_values;                              // chain index value of each reaction in update_everything()
   int chain_grow_warned;                             // warned about growth of an unlabelled chain
+  // @FelixWodaczek/dipole3d dipole mu of the created atoms
+  int *mu_mode;                                      // MU_NONE, MU_GROW (copy of the head), MU_NUCLEATE (bond direction)
+  int mu_anyflag;                                    // 1 if any reaction sets the dipoles of created atoms
+  int mu_cuff;                                       // first of 4 mega_glove rows that carry mu of the head
+  double **mu_values;                                // mu (x,y,z,length) of the head of each reaction in update_everything()
+  int mu_grow_warned;                                // warned about growth without a head dipole
   int custom_exclude_flag;
   int **rate_limit;
   int **store_rxn_count;
@@ -229,6 +235,7 @@ class FixBondReact : public Fix {
   double get_temperature(tagint **, int, int);
   double get_totalcharge();
   double get_chain_value(int); // @FelixWodaczek/chain-index
+  void get_mu_head(int, double *); // @FelixWodaczek/dipole3d
   void customvarnames();    // get per-atom variables names used by custom constraint
   void get_customvars();    // evaluate local values for variables names used by custom constraint
   double custom_constraint(const std::string &);    // evaulate expression for custom constraint
@@ -284,6 +291,7 @@ class FixBondReact : public Fix {
     tagint tag, molecule;
     int type, mask;
     int chain_index; // @FelixWodaczek/chain-index
+    double mu[4];    // @FelixWodaczek/dipole3d
     imageint image;
     double rmass, x[3], v[3];
   };
