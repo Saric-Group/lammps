@@ -9,6 +9,8 @@ FixStyle(nucleate, FixNucleate)
 
 #include "fix.h"
 
+#include <vector>
+
 namespace LAMMPS_NS {
 
 class FixNucleate : public Fix {
@@ -40,11 +42,18 @@ class FixNucleate : public Fix {
     int seed; // seed for random number generator
     int warnflag; // whether to warn if no nucleation events occur
     double prob; // probability (0-1) of nucleation event occurring per particle
+    char *probstr; // @FelixWodaczek/nucleate-variable name of equal-style variable for prob (nullptr = constant)
+    int probvar; // @FelixWodaczek/nucleate-variable index of that variable
     double r_surf; // distance of particle from surface
     double overlap, overlapsq; // minimum distance from existing atoms
     double insert_sigma; // bond length of inserted dimer
     int bond_type; // bond type of inserted dimer
+    int insert_types[2]; // atom types of inserted dimer
+    std::vector<int> overlap_except; // per atom type: 1 if ignored in the overlap check
     int noffset; // run at timestep + noffset to avoid clashes with eg. bond/react
+    double rmass_new; // @FelixWodaczek/dipole3d mass of inserted atoms, <= 0: keep the one of the atom style
+    int mu_flag; // @FelixWodaczek/dipole3d set the dipole of both atoms of an inserted dimer along its bond (tail to head)
+    int chain_index_flag; // @FelixWodaczek/chain-index set i_chain_index of inserted dimers to 0 (tail) and 1 (head)
 
     // lifetime tracking flags and variables
     // makes two atom/property fixes and keeps track of them

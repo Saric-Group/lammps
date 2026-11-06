@@ -8,6 +8,7 @@
 #include "fix.h"
 #include "force.h"
 #include "group.h"
+#include "input.h"
 #include "math_extra.h"
 #include "memory.h"
 #include "modify.h"
@@ -16,12 +17,37 @@
 #include "random_mars.h"
 #include "respa.h"
 #include "update.h"
+#include "variable.h"
 
 #include <set>
 #include <cstring>
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
+
+// per-atom chain index i_chain_index (ghost yes), shared with fix chain/index and fix nucleate:
+// use an existing property or create it under the fix ID CHAIN_INDEX_PROPERTY.
+// Kept local (no dependency on fix_chain_index.h), the same code is in fix_chain_index.cpp
+static int find_or_create_chain_index_property(LAMMPS *lmp)
+{
+  int flag, cols, ghost;
+  int index = lmp->atom->find_custom_ghost("chain_index", flag, cols, ghost);
+  if (index >= 0) {
+    if (flag != 0 || cols != 0)
+      lmp->error->all(FLERR, "Per-atom property chain_index must be an integer vector (i_chain_index)");
+    if (!ghost)
+      lmp->error->all(FLERR, "Per-atom property i_chain_index must be defined with ghost yes");
+    return index;
+  }
+  Fix *property = lmp->modify->add_fix("CHAIN_INDEX_PROPERTY all property/atom i_chain_index ghost yes");
+  index = lmp->atom->find_custom("chain_index", flag, cols);
+  // keep values restored from a restart file
+  if (!property->restart_reset) {
+    int *chain_index = lmp->atom->ivector[index];
+    for (int i = 0; i < lmp->atom->nlocal; i++) chain_index[i] = -1;
+  }
+  return index;
+}
 
 enum { WARN, NOWARN }; // warnflag values
 
@@ -32,6 +58,7 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
   int iarg = 3;
   force_reneighbor = 1;
   next_reneighbor = -1;
+  dynamic_group_allow = 1; // the group is evaluated from the atom masks at every nucleation step
 
   // necessary args
   nevery = utils::inumeric(FLERR, arg[iarg++], false, lmp);
@@ -39,15 +66,21 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
 
   // standard values for kwargs
   prob = 1.;
+  probstr = nullptr;
   r_surf = 1.0;
   overlap = 0; overlapsq=0;
   warnflag = WARN;
   insert_sigma = 1.0;
   bond_type = 1; // bond type of the inserted dimer
+  insert_types[0] = 2; insert_types[1] = 3; // atom types of the inserted dimer
+  overlap_except.assign(atom->ntypes + 1, 0); // atom types ignored in the overlap check
   noffset = 0; // run when (step - noffset) % nevery == 0
   lifetime_owner = false; // lifetime tracking
   hydrolysis_owner = false; // lifetime tracking
   lifetime_flag = LIFETIME_OFF; // lifetime tracking
+  chain_index_flag = 0; // chain index of inserted dimers
+  mu_flag = 0;
+  rmass_new = 0.0;
 
   // parse kwargs
   while (iarg < narg) {
@@ -55,7 +88,9 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
       if (iarg + 2 > narg)
         error->all(FLERR, "Missing numeric parameter after prob kwarg.");
 
-      prob = utils::numeric(FLERR, arg[iarg+1], false, lmp);
+      // @FelixWodaczek/nucleate-variable prob v_name: equal-style variable evaluated whenever the fix nucleates
+      if (utils::strmatch(arg[iarg+1], "^v_")) probstr = utils::strdup(arg[iarg+1] + 2);
+      else prob = utils::numeric(FLERR, arg[iarg+1], false, lmp);
       iarg += 2;
     } else if (strcmp(arg[iarg],"Rsurf") == 0) {
       if (iarg + 2 > narg)
@@ -84,6 +119,30 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
       if (bond_type < 1 || bond_type > atom->nbondtypes)
         error->all(FLERR, "Invalid bond type {} for fix nucleate", bond_type);
       iarg += 2;
+    } else if (strcmp(arg[iarg],"types") == 0) {
+      if (iarg + 3 > narg)
+        error->all(FLERR, "Missing numeric parameters after types kwarg.");
+
+      for (int i = 0; i < 2; i++) {
+        insert_types[i] = utils::inumeric(FLERR, arg[iarg+1+i], false, lmp);
+        if (insert_types[i] < 1 || insert_types[i] > atom->ntypes)
+          error->all(FLERR, "Invalid atom type {} for fix nucleate types", insert_types[i]);
+      }
+      iarg += 3;
+    } else if (strcmp(arg[iarg],"nooverlap") == 0) {
+      if (iarg + 2 > narg)
+        error->all(FLERR, "Missing numeric parameter after nooverlap kwarg.");
+
+      int num_except_types = utils::inumeric(FLERR, arg[iarg+1], false, lmp);
+      if (num_except_types < 0 || iarg + 2 + num_except_types > narg)
+        error->all(FLERR, "Fix nucleate: 'nooverlap' has too few arguments");
+      for (int i = 0; i < num_except_types; i++) {
+        int except_type = utils::inumeric(FLERR, arg[iarg+2+i], false, lmp);
+        if (except_type < 1 || except_type > atom->ntypes)
+          error->all(FLERR, "Invalid atom type {} for fix nucleate nooverlap", except_type);
+        overlap_except[except_type] = 1;
+      }
+      iarg += 2 + num_except_types;
     } else if (strcmp(arg[iarg],"nowarn") == 0) {
       warnflag = NOWARN;
       iarg += 1;
@@ -105,6 +164,24 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
       } else {
         lifetime_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
       }
+      iarg += 2;
+    } else if (strcmp(arg[iarg], "chain_index") == 0) {
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix nucleate command: "
+                                    "'chain_index' keyword has too few arguments");
+      chain_index_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
+      iarg += 2;
+    } else if (strcmp(arg[iarg], "rmass") == 0) {
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix nucleate command: "
+                                    "'rmass' keyword has too few arguments");
+      rmass_new = utils::numeric(FLERR, arg[iarg + 1], false, lmp);
+      if (rmass_new <= 0.0) error->all(FLERR, "Fix nucleate: 'rmass' must be positive");
+      iarg += 2;
+    } else if (strcmp(arg[iarg], "mu") == 0) {
+      if (iarg + 2 > narg) error->all(FLERR, "Illegal fix nucleate command: "
+                                    "'mu' keyword has too few arguments");
+      mu_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
+      if (mu_flag && !atom->mu_flag)
+        error->all(FLERR, "Fix nucleate: 'mu yes' requires atom attribute mu");
       iarg += 2;
     } else {
       error->all(FLERR, "Illegal fix nucleate command.");
@@ -133,10 +210,14 @@ FixNucleate::~FixNucleate() {
   if (hydrolysis_owner && id_hydrolysis_fix != nullptr && modify->get_fix_by_id(id_hydrolysis_fix)) modify->delete_fix(id_hydrolysis_fix);
   delete[] id_lifetime_fix;
   delete[] id_hydrolysis_fix;
+  delete[] probstr;
 }
 
 void FixNucleate::post_constructor() {
   random = new RanMars(lmp, seed + comm->me);
+
+  // per-atom chain index, shared with fix chain/index and fix bond/react
+  if (chain_index_flag) find_or_create_chain_index_property(lmp);
 
   if (lifetime_flag) {
     // create an atom property to store the lifetime of atoms
@@ -181,6 +262,13 @@ void FixNucleate::init() {
   if (utils::strmatch(update->integrate_style,"^respa"))
     nlevels_respa = (dynamic_cast<Respa *>(update->integrate))->nlevels;
 
+  if (probstr) {
+    probvar = input->variable->find(probstr);
+    if (probvar < 0) error->all(FLERR, "Variable {} for fix nucleate prob does not exist", probstr);
+    if (!input->variable->equalstyle(probvar))
+      error->all(FLERR, "Variable {} for fix nucleate prob is not equal-style", probstr);
+  }
+
   avec = dynamic_cast<AtomVecEllipsoid *>(atom->style_match("ellipsoid"));
   if (!avec) error->all(FLERR, "Pair style ylz requires atom style ellipsoid");
 
@@ -208,6 +296,8 @@ void FixNucleate::post_integrate() {
   // TODO: remove alignment atom/property
   // TODO: forward_comm somehow breaks everything, would be nice if this could work at some point
   if ((update->ntimestep-noffset) % nevery) return;
+
+  if (probstr) prob = input->variable->compute_equal(probvar);
 
   // figure out how many nucleation events to attempt this step
   int n_nucleate_group = 0;
@@ -382,10 +472,11 @@ void FixNucleate::post_integrate() {
     // check if there is an overlap with existing atoms
     if (overlap_flags[icoord]) continue;
 
-    atom->avec->create_atom(2, insert_coords[icoord]);
-    atom->avec->create_atom(3, insert_coords[icoord]+3);
+    atom->avec->create_atom(insert_types[0], insert_coords[icoord]);
+    atom->avec->create_atom(insert_types[1], insert_coords[icoord]+3);
 
     for (int newind=atom->nlocal-2; newind<atom->nlocal; newind++) {
+      if (rmass_new > 0.0) atom->rmass[newind] = rmass_new;
       initialise_v(atom->v[newind], atom->rmass[newind]);
       atom->mask[newind] = 1;
       atom->image[newind] = ((imageint) IMGMAX << IMG2BITS) |
@@ -393,11 +484,36 @@ void FixNucleate::post_integrate() {
       modify->create_attribute(newind);
     }
 
+    // @FelixWodaczek/dipole3d unit dipole of both atoms along the bond from tail to head
+    if (mu_flag) {
+      double **xn = atom->x;
+      const int tail = atom->nlocal - 2, head = atom->nlocal - 1;
+      double d[3] = {xn[head][0] - xn[tail][0], xn[head][1] - xn[tail][1], xn[head][2] - xn[tail][2]};
+      domain->minimum_image(FLERR, d[0], d[1], d[2]);
+      const double dlen = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+      for (int newind = tail; newind <= head; newind++) {
+        for (int k = 0; k < 3; k++) atom->mu[newind][k] = (dlen > 0.0) ? d[k] / dlen : 0.0;
+        atom->mu[newind][3] = (dlen > 0.0) ? 1.0 : 0.0;
+      }
+    }
+
     my_insertions++;
   }
 
   // add creation times for lifetime tracking
   if (lifetime_flag) add_creation_times(2*my_insertions);
+
+  // the inserted dimer is a new chain: tail (type 2) 0, head (type 3) 1; without the keyword
+  // it is unlabelled (-1) rather than keeping the index of the ghost atom of its slot
+  int ci_flag, ci_cols;
+  const int chain_index_property = atom->find_custom("chain_index", ci_flag, ci_cols);
+  if (chain_index_property >= 0) {
+    int *chain_index = atom->ivector[chain_index_property];
+    for (int iinsert = 0; iinsert < my_insertions; iinsert++) {
+      chain_index[nlocal_prev + 2 * iinsert] = chain_index_flag ? 0 : -1;
+      chain_index[nlocal_prev + 2 * iinsert + 1] = chain_index_flag ? 1 : -1;
+    }
+  }
 
   // send around how many insertions each proc made
   MPI_Scan(&my_insertions, &global_insertions, 1, MPI_INT, MPI_SUM, world);
@@ -520,6 +636,7 @@ void FixNucleate::check_overlap(double* coords, int& overlapflag) {
   double delx, dely, delz, rsq;
   if (overlapsq > 0) {
     for (int i = 0; i < atom->nlocal+atom->nghost; i++) {
+      if (overlap_except[atom->type[i]]) continue;
       delx = coords[0] - atom->x[i][0];
       dely = coords[1] - atom->x[i][1];
       delz = coords[2] - atom->x[i][2];
