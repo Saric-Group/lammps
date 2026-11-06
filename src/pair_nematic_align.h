@@ -36,6 +36,7 @@ class PairNematicAlign : public Pair {
 
  protected:
   double cut_global;
+  int max_dist;    // 0: all pairs, else only beads of one molecule within max_dist chain indices
   double **epsilon, **cut;
   int **no_radial;
 

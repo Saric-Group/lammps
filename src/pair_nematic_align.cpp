@@ -18,6 +18,11 @@
 
    E = -eps (1 - r/rc)^2 [(mu_i.u)^2 + (mu_j.u)^2],  u = (x_i - x_j)/r
 
+   With max_dist N only beads of the same molecule ID whose per-atom
+   chain indices (i_chain_index, from fix chain/index or fix bond/react
+   ... chain_index) differ by at most N interact, i.e. the dipoles are
+   aligned with the backbone of their own filament.
+
    Forces and torques are the exact derivatives of E with respect to the
    positions and the orientations of the dipoles.
 ------------------------------------------------------------------------- */
@@ -25,6 +30,7 @@
 #include "pair_nematic_align.h"
 
 #include "atom.h"
+#include "comm.h"
 #include "error.h"
 #include "force.h"
 #include "memory.h"
@@ -39,7 +45,7 @@ using namespace LAMMPS_NS;
 /* ---------------------------------------------------------------------- */
 
 PairNematicAlign::PairNematicAlign(LAMMPS *lmp) :
-    Pair(lmp), cut_global(0.0), epsilon(nullptr), cut(nullptr), no_radial(nullptr)
+    Pair(lmp), cut_global(0.0), max_dist(0), epsilon(nullptr), cut(nullptr), no_radial(nullptr)
 {
   single_enable = 0;
   restartinfo = 0;
@@ -75,14 +81,21 @@ void PairNematicAlign::allocate()
 }
 
 /* ----------------------------------------------------------------------
-   pair_style nematic/align cutoff
+   pair_style nematic/align cutoff [max_dist N]
 ------------------------------------------------------------------------- */
 
 void PairNematicAlign::settings(int narg, char **arg)
 {
-  if (narg != 1) error->all(FLERR, "Illegal pair_style nematic/align command");
+  if (narg != 1 && narg != 3) error->all(FLERR, "Illegal pair_style nematic/align command");
   cut_global = utils::numeric(FLERR, arg[0], false, lmp);
   if (cut_global <= 0.0) error->all(FLERR, "Pair style nematic/align: cutoff must be positive");
+  max_dist = 0;
+  if (narg == 3) {
+    if (strcmp(arg[1], "max_dist") != 0)
+      error->all(FLERR, "Unknown keyword {} for pair_style nematic/align", arg[1]);
+    max_dist = utils::inumeric(FLERR, arg[2], false, lmp);
+    if (max_dist < 1) error->all(FLERR, "Pair style nematic/align: max_dist must be at least 1");
+  }
 
   if (allocated)
     for (int i = 1; i <= atom->ntypes; i++)
@@ -131,6 +144,16 @@ void PairNematicAlign::init_style()
 {
   if (!atom->mu_flag || !atom->torque_flag)
     error->all(FLERR, "Pair style nematic/align requires atom attributes mu and torque");
+  if (max_dist) {
+    if (!atom->molecule_flag)
+      error->all(FLERR, "Pair style nematic/align max_dist requires molecule IDs");
+    int flag, cols, ghost;
+    const int index = atom->find_custom_ghost("chain_index", flag, cols, ghost);
+    if (index < 0 || flag != 0 || cols != 0 || !ghost)
+      error->all(FLERR,
+                 "Pair style nematic/align max_dist needs the per-atom property i_chain_index "
+                 "with ghost values (fix chain/index or fix bond/react ... chain_index)");
+  }
   neighbor->add_request(this);
 }
 
@@ -161,6 +184,13 @@ void PairNematicAlign::compute(int eflag, int vflag)
   const int newton_pair = force->newton_pair;
   double *special_lj = force->special_lj;
 
+  tagint *molecule = atom->molecule;
+  int *chain_index = nullptr;
+  if (max_dist) {
+    int flag, cols;
+    chain_index = atom->ivector[atom->find_custom("chain_index", flag, cols)];
+  }
+
   const int inum = list->inum;
   int *ilist = list->ilist;
   int *numneigh = list->numneigh;
@@ -179,6 +209,12 @@ void PairNematicAlign::compute(int eflag, int vflag)
       j &= NEIGHMASK;
       if (mu[j][3] <= 0.0) continue;
       const int jtype = type[j];
+      if (max_dist) {
+        // same filament and at most max_dist monomers apart along the chain
+        if (molecule[i] != molecule[j]) continue;
+        const int ci = chain_index[i], cj = chain_index[j];
+        if (ci < 0 || cj < 0 || abs(ci - cj) > max_dist) continue;
+      }
 
       const double delx = x[i][0] - x[j][0];
       const double dely = x[i][1] - x[j][1];
