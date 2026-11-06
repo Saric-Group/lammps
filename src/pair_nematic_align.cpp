@@ -154,6 +154,15 @@ void PairNematicAlign::init_style()
                  "Pair style nematic/align max_dist needs the per-atom property i_chain_index "
                  "with ghost values (fix chain/index or fix bond/react ... chain_index)");
   }
+  // pairs of beads of one filament are 1-2, 1-3, ... neighbours: with a special_lj factor of 0 they are
+  // not in the neighbour list at all. Use fractional special_bonds and pair_modify special per sub-style.
+  if (max_dist && comm->me == 0 &&
+      (force->special_lj[1] == 0.0 || force->special_lj[2] == 0.0 || force->special_lj[3] == 0.0))
+    error->warning(FLERR,
+                   "Pair style nematic/align max_dist: special_lj factor 0 excludes bonded beads "
+                   "(1-2, 1-3, 1-4 neighbours), use a fractional special_bonds and pair_modify "
+                   "pair nematic/align special lj 1.0 1.0 1.0");
+
   neighbor->add_request(this);
 }
 
