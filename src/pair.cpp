@@ -71,6 +71,7 @@ Pair::Pair(LAMMPS *lmp) :
   comm_forward = comm_reverse = comm_reverse_off = 0;
 
   single_enable = 1;
+  orientation_flag = 0;
   born_matrix_enable = 0;
   single_hessian_enable = 0;
   restartinfo = 1;

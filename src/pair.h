@@ -104,6 +104,8 @@ class Pair : protected Pointers {
   int nextra;         // # of extra quantities pair style calculates
   double *pvector;    // vector of extra pair quantities
 
+  int orientation_flag;    // 1 if the style implements single_orientation() (dipole3d)
+
   int single_extra;    // number of extra single values calculated
   double *svector;     // vector of extra single quantities
 
@@ -163,6 +165,15 @@ class Pair : protected Pointers {
   virtual double single(int, int, int, int, double, double, double, double &fforce)
   {
     fforce = 0.0;
+    return 0.0;
+  }
+
+  // @FelixWodaczek/dipole3d pair energy of two atoms with dipoles mu and surface normals n (may be null),
+  // special_order = 0..3 for the special_bonds factor, used by fix bond/react energy_check
+  virtual double single_orientation(int /*itype*/, int /*jtype*/, double /*rsq*/, int /*special_order*/,
+                                    const double * /*mu_i*/, const double * /*mu_j*/,
+                                    const double * /*n_i*/, const double * /*n_j*/)
+  {
     return 0.0;
   }
 
