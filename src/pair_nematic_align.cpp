@@ -23,8 +23,23 @@
    ... chain_index) differ by at most N interact, i.e. the dipoles are
    aligned with the backbone of their own filament.
 
+   pair_coeff ... offset delta (needs max_dist) is for curved filaments: on
+   an arc of radius R with bond length b the chord to the k-th neighbour
+   makes the angle k arcsin(b / 2R) with the tangent, so with mu along the
+   tangent (mu.u)^2 is not maximal and the term straightens the filament.
+   With the offset, a pair with chain-index difference k uses
+   alpha = k delta and every (mu.u)^2 becomes
+     h(c) = m^2 cos^2(theta - alpha),  c = mu.u, m = |mu|,
+     theta = arccos(|c| / m) in [0, pi/2],
+   i.e. h = (|c| cos alpha + sqrt(m^2 - c^2) sin alpha)^2, which is c^2 for
+   alpha = 0. The minimum is a cone of half angle alpha around mu: there is
+   no preferred direction of the tilt (the bending potentials choose it).
+   h has kinks at theta = 0 (cone apex: force bounded, its direction
+   undefined) and at theta = pi/2 (c changes sign), both away from the
+   minimum for small alpha.
+
    Forces and torques are the exact derivatives of E with respect to the
-   positions and the orientations of the dipoles.
+   positions and the orientations of the dipoles (away from those kinks).
 ------------------------------------------------------------------------- */
 
 #include "pair_nematic_align.h"
@@ -42,10 +57,24 @@
 
 using namespace LAMMPS_NS;
 
+/* ----------------------------------------------------------------------
+   h = m^2 cos^2(theta - alpha) = (|c| cos a + s sin a)^2, s = sqrt(m^2 - c^2),
+   and dh/dc = 2 q (sgn(c) cos a - c sin a / s); s is floored so that the
+   cone apex gives a bounded force (a_k = mu_k - c u vanishes there as well)
+------------------------------------------------------------------------- */
+
+static inline void cone_term(double c, double m, double ca, double sa, double &h, double &dh)
+{
+  const double s = sqrt(MAX(m * m - c * c, 1.0e-24));
+  const double q = fabs(c) * ca + s * sa;
+  h = q * q;
+  dh = 2.0 * q * ((c >= 0.0 ? 1.0 : -1.0) * ca - c * sa / s);
+}
+
 /* ---------------------------------------------------------------------- */
 
 PairNematicAlign::PairNematicAlign(LAMMPS *lmp) :
-    Pair(lmp), cut_global(0.0), max_dist(0), epsilon(nullptr), cut(nullptr), no_radial(nullptr)
+    Pair(lmp), cut_global(0.0), max_dist(0), epsilon(nullptr), cut(nullptr), no_radial(nullptr), offset(nullptr)
 {
   single_enable = 0;
   restartinfo = 0;
@@ -62,6 +91,7 @@ PairNematicAlign::~PairNematicAlign()
     memory->destroy(epsilon);
     memory->destroy(cut);
     memory->destroy(no_radial);
+    memory->destroy(offset);
   }
 }
 
@@ -78,6 +108,7 @@ void PairNematicAlign::allocate()
   memory->create(epsilon, n + 1, n + 1, "pair:epsilon");
   memory->create(cut, n + 1, n + 1, "pair:cut");
   memory->create(no_radial, n + 1, n + 1, "pair:no_radial");
+  memory->create(offset, n + 1, n + 1, "pair:offset");
 }
 
 /* ----------------------------------------------------------------------
@@ -104,17 +135,12 @@ void PairNematicAlign::settings(int narg, char **arg)
 }
 
 /* ----------------------------------------------------------------------
-   pair_coeff I J epsilon [cut] [no_radial]
+   pair_coeff I J epsilon [cut] [no_radial] [offset delta]
 ------------------------------------------------------------------------- */
 
 void PairNematicAlign::coeff(int narg, char **arg)
 {
-  int no_radial_one = 0;
-  if (narg > 3 && strcmp(arg[narg - 1], "no_radial") == 0) {
-    no_radial_one = 1;
-    narg--;
-  }
-  if (narg < 3 || narg > 4) error->all(FLERR, "Incorrect args for pair coefficients");
+  if (narg < 3) error->all(FLERR, "Incorrect args for pair coefficients");
   if (!allocated) allocate();
 
   int ilo, ihi, jlo, jhi;
@@ -123,8 +149,26 @@ void PairNematicAlign::coeff(int narg, char **arg)
 
   const double epsilon_one = utils::numeric(FLERR, arg[2], false, lmp);
   double cut_one = cut_global;
-  if (narg == 4) cut_one = utils::numeric(FLERR, arg[3], false, lmp);
+  int iarg = 3;
+  if (iarg < narg && strcmp(arg[iarg], "no_radial") != 0 && strcmp(arg[iarg], "offset") != 0)
+    cut_one = utils::numeric(FLERR, arg[iarg++], false, lmp);
   if (cut_one <= 0.0) error->all(FLERR, "Invalid cutoff specified for pair coefficients");
+
+  int no_radial_one = 0;
+  double offset_one = 0.0;
+  while (iarg < narg) {
+    if (strcmp(arg[iarg], "no_radial") == 0) {
+      no_radial_one = 1;
+      iarg++;
+    } else if (strcmp(arg[iarg], "offset") == 0) {
+      if (iarg + 2 > narg) utils::missing_cmd_args(FLERR, "pair_coeff nematic/align offset", error);
+      offset_one = utils::numeric(FLERR, arg[iarg + 1], false, lmp);
+      iarg += 2;
+    } else
+      error->all(FLERR, "Unknown pair_coeff nematic/align keyword {}", arg[iarg]);
+  }
+  if (offset_one != 0.0 && !max_dist)
+    error->all(FLERR, "Pair style nematic/align: offset needs max_dist (chain-index differences)");
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++)
@@ -132,6 +176,7 @@ void PairNematicAlign::coeff(int narg, char **arg)
       epsilon[i][j] = epsilon_one;
       cut[i][j] = cut_one;
       no_radial[i][j] = no_radial_one;
+      offset[i][j] = offset_one;
       setflag[i][j] = 1;
       count++;
     }
@@ -144,6 +189,11 @@ void PairNematicAlign::init_style()
 {
   if (!atom->mu_flag || !atom->torque_flag)
     error->all(FLERR, "Pair style nematic/align requires atom attributes mu and torque");
+  if (!max_dist)
+    for (int i = 1; i <= atom->ntypes; i++)
+      for (int j = i; j <= atom->ntypes; j++)
+        if (setflag[i][j] && offset[i][j] != 0.0)
+          error->all(FLERR, "Pair style nematic/align: offset needs max_dist (chain-index differences)");
   if (max_dist) {
     if (!atom->molecule_flag)
       error->all(FLERR, "Pair style nematic/align max_dist requires molecule IDs");
@@ -175,6 +225,7 @@ double PairNematicAlign::init_one(int i, int j)
   epsilon[j][i] = epsilon[i][j];
   cut[j][i] = cut[i][j];
   no_radial[j][i] = no_radial[i][j];
+  offset[j][i] = offset[i][j];
   return cut[i][j];
 }
 
@@ -218,11 +269,13 @@ void PairNematicAlign::compute(int eflag, int vflag)
       j &= NEIGHMASK;
       if (mu[j][3] <= 0.0) continue;
       const int jtype = type[j];
+      int kdist = 0;
       if (max_dist) {
         // same filament and at most max_dist monomers apart along the chain
         if (molecule[i] != molecule[j]) continue;
         const int ci = chain_index[i], cj = chain_index[j];
         if (ci < 0 || cj < 0 || abs(ci - cj) > max_dist) continue;
+        kdist = abs(ci - cj);
       }
 
       const double delx = x[i][0] - x[j][0];
@@ -239,18 +292,31 @@ void PairNematicAlign::compute(int eflag, int vflag)
       const double ux = delx * rinv, uy = dely * rinv, uz = delz * rinv;
       const double mui_u = mu[i][0] * ux + mu[i][1] * uy + mu[i][2] * uz;
       const double muj_u = mu[j][0] * ux + mu[j][1] * uy + mu[j][2] * uz;
-      const double S = mui_u * mui_u + muj_u * muj_u;
+      // h(c) and dh/dc of both dipoles: c^2 and 2c without offset
+      double hi, hj, dhi, dhj;
+      const double alpha = kdist * offset[itype][jtype];
+      if (alpha == 0.0) {
+        hi = mui_u * mui_u;
+        hj = muj_u * muj_u;
+        dhi = 2.0 * mui_u;
+        dhj = 2.0 * muj_u;
+      } else {
+        const double ca = cos(alpha), sa = sin(alpha);
+        cone_term(mui_u, mu[i][3], ca, sa, hi, dhi);
+        cone_term(muj_u, mu[j][3], ca, sa, hj, dhj);
+      }
+      const double S = hi + hj;
 
       const double one_minus = 1.0 - r / rc;
       const double g = -eps * one_minus * one_minus;    // E = g S
       const double dgdr = 2.0 * eps * one_minus / rc;
 
-      // tangential part: -g dS/dx_i, with dS/dx_i = 2/r [(mu_i.u) a_i + (mu_j.u) a_j],
+      // tangential part: -g dS/dx_i, with dS/dx_i = 1/r [h'_i a_i + h'_j a_j],
       // a_k = mu_k - (mu_k.u) u
-      const double tp = -2.0 * g * rinv;
-      double fx = tp * (mui_u * (mu[i][0] - mui_u * ux) + muj_u * (mu[j][0] - muj_u * ux));
-      double fy = tp * (mui_u * (mu[i][1] - mui_u * uy) + muj_u * (mu[j][1] - muj_u * uy));
-      double fz = tp * (mui_u * (mu[i][2] - mui_u * uz) + muj_u * (mu[j][2] - muj_u * uz));
+      const double tp = -g * rinv;
+      double fx = tp * (dhi * (mu[i][0] - mui_u * ux) + dhj * (mu[j][0] - muj_u * ux));
+      double fy = tp * (dhi * (mu[i][1] - mui_u * uy) + dhj * (mu[j][1] - muj_u * uy));
+      double fz = tp * (dhi * (mu[i][2] - mui_u * uz) + dhj * (mu[j][2] - muj_u * uz));
       // radial part: -dg/dr S u
       if (!no_radial[itype][jtype]) {
         fx -= dgdr * S * ux;
@@ -258,11 +324,11 @@ void PairNematicAlign::compute(int eflag, int vflag)
         fz -= dgdr * S * uz;
       }
 
-      // torque = mu x (-dE/dmu) = -2 g (mu.u) (mu x u)
-      const double tc = -2.0 * g;
-      torque[i][0] += tc * mui_u * (mu[i][1] * uz - mu[i][2] * uy);
-      torque[i][1] += tc * mui_u * (mu[i][2] * ux - mu[i][0] * uz);
-      torque[i][2] += tc * mui_u * (mu[i][0] * uy - mu[i][1] * ux);
+      // torque = mu x (-dE/dmu) = -g h' (mu x u)
+      const double tc = -g;
+      torque[i][0] += tc * dhi * (mu[i][1] * uz - mu[i][2] * uy);
+      torque[i][1] += tc * dhi * (mu[i][2] * ux - mu[i][0] * uz);
+      torque[i][2] += tc * dhi * (mu[i][0] * uy - mu[i][1] * ux);
 
       f[i][0] += fx;
       f[i][1] += fy;
@@ -271,9 +337,9 @@ void PairNematicAlign::compute(int eflag, int vflag)
         f[j][0] -= fx;
         f[j][1] -= fy;
         f[j][2] -= fz;
-        torque[j][0] += tc * muj_u * (mu[j][1] * uz - mu[j][2] * uy);
-        torque[j][1] += tc * muj_u * (mu[j][2] * ux - mu[j][0] * uz);
-        torque[j][2] += tc * muj_u * (mu[j][0] * uy - mu[j][1] * ux);
+        torque[j][0] += tc * dhj * (mu[j][1] * uz - mu[j][2] * uy);
+        torque[j][1] += tc * dhj * (mu[j][2] * ux - mu[j][0] * uz);
+        torque[j][2] += tc * dhj * (mu[j][0] * uy - mu[j][1] * ux);
       }
 
       if (evflag) {
