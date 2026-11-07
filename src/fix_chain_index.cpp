@@ -27,6 +27,13 @@
    backbone bonds of the group on all processors and walks every chain
    from its tail, so the result does not depend on the order in which the
    bonds are stored or on newton_bond.
+
+   types lo*hi: only atoms of these types are gathered, walked and
+   labelled; the index of all other atoms is left as it is, so that
+   several instances can label different filament species (e.g. FtsZ with
+   tail 2 / head 3 and SepF with both ends of one type, tail 8 head 8:
+   with tail == head every chain is walked from its end with the lower
+   tag, the other end is then already visited and skipped).
 ------------------------------------------------------------------------- */
 
 #include "fix_chain_index.h"
@@ -94,7 +101,7 @@ void parse_types(LAMMPS *lmp, int narg, char **arg, int &iarg, int ntypes, int *
 /* ---------------------------------------------------------------------- */
 
 FixChainIndex::FixChainIndex(LAMMPS *lmp, int narg, char **arg) :
-    Fix(lmp, narg, arg), last_respa_step(-1), bondtype_flag(nullptr), attach_flag(nullptr)
+    Fix(lmp, narg, arg), last_respa_step(-1), bondtype_flag(nullptr), attach_flag(nullptr), atomtype_flag(nullptr)
 {
   if (narg < 4) utils::missing_cmd_args(FLERR, "fix chain/index", error);
   if (!atom->molecular) error->all(FLERR, "Fix chain/index requires a molecular system");
@@ -109,6 +116,8 @@ FixChainIndex::FixChainIndex(LAMMPS *lmp, int narg, char **arg) :
     bondtype_flag[i] = 1;
     attach_flag[i] = 0;
   }
+  memory->create(atomtype_flag, atom->ntypes + 1, "chain/index:atomtype_flag");
+  for (int i = 0; i <= atom->ntypes; i++) atomtype_flag[i] = 1;
   tail_type = 2;
   head_type = 3;
   warnflag = 1;
@@ -120,6 +129,12 @@ FixChainIndex::FixChainIndex(LAMMPS *lmp, int narg, char **arg) :
       parse_types(lmp, narg, arg, iarg, nbondtypes, bondtype_flag, "bondtypes");
     } else if (strcmp(arg[iarg], "attach") == 0) {
       parse_types(lmp, narg, arg, iarg, nbondtypes, attach_flag, "attach");
+    } else if (strcmp(arg[iarg], "types") == 0) {
+      if (iarg + 2 > narg) utils::missing_cmd_args(FLERR, "fix chain/index types", error);
+      int lo, hi;
+      utils::bounds(FLERR, arg[iarg + 1], 1, atom->ntypes, lo, hi, error);
+      for (int i = 0; i <= atom->ntypes; i++) atomtype_flag[i] = (i >= lo && i <= hi) ? 1 : 0;
+      iarg += 2;
     } else if (strcmp(arg[iarg], "tail") == 0) {
       if (iarg + 2 > narg) utils::missing_cmd_args(FLERR, "fix chain/index tail", error);
       tail_type = utils::inumeric(FLERR, arg[iarg + 1], false, lmp);
@@ -162,6 +177,7 @@ FixChainIndex::~FixChainIndex()
   // the property fix is shared with fix bond/react and fix nucleate and stays defined
   memory->destroy(bondtype_flag);
   memory->destroy(attach_flag);
+  memory->destroy(atomtype_flag);
 }
 
 /* ----------------------------------------------------------------------
@@ -272,7 +288,7 @@ void FixChainIndex::relabel()
   // local group atoms (tag, type, old index) and bonds (tag, tag, 0 backbone / 1 attach)
   std::vector<tagint> my_atoms, my_bonds;
   for (int i = 0; i < nlocal; i++) {
-    if (!(mask[i] & groupbit)) continue;
+    if (!(mask[i] & groupbit) || !atomtype_flag[type[i]]) continue;
     my_atoms.push_back(tag[i]);
     my_atoms.push_back(type[i]);
     my_atoms.push_back(chain_index[i]);
@@ -378,7 +394,7 @@ void FixChainIndex::relabel()
   }
 
   for (int i = 0; i < nlocal; i++) {
-    if (!(mask[i] & groupbit)) continue;
+    if (!(mask[i] & groupbit) || !atomtype_flag[type[i]]) continue;
     const auto it = label.find(tag[i]);
     chain_index[i] = (it == label.end()) ? -1 : it->second;
   }
