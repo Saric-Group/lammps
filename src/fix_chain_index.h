@@ -55,6 +55,7 @@ class FixChainIndex : public Fix {
   bigint last_respa_step;    // step of the last rRESPA update
   int *bondtype_flag;    // 1 for backbone bond types
   int *attach_flag;      // 1 for bond types that attach side beads to the backbone
+  int *atomtype_flag;    // 1 for atom types this fix labels (keyword types), others are left untouched
   int tail_type, head_type;
   int warnflag;
   int modulo;            // relabelling keeps the indices modulo this value
