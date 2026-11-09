@@ -28,6 +28,7 @@
 #include "memory.h"
 #include "modify.h"
 #include "neigh_list.h"
+#include "neighbor.h"
 
 #include <cmath>
 #include <cstring>
@@ -40,8 +41,11 @@ using namespace MathConst;
 PairHarmonicSurfaceAvg::PairHarmonicSurfaceAvg(LAMMPS *lmp) : Pair(lmp), k(nullptr), r_zero(nullptr), cut(nullptr), cut_tang(nullptr),\
                                                              id_fix_store_nnvecs(nullptr), fix_store_nnvecs(nullptr),
                                                              idx_nnvec_contributors(-1), idx_avg_nvecs(-1),
-                                                             nnvec_contributors_atom(nullptr), avg_nvecs_atom(nullptr)
+                                                             nnvec_contributors_atom(nullptr), avg_nvecs_atom(nullptr),
+                                                             unit_normal(nullptr), unit_normal_stamp(nullptr),
+                                                             nmax_unit_normal(0), averaging_stamp(0)
 {
+  external_normals = 0;
   born_matrix_enable = 0; // born_matrix() is not implemented
   writedata = 1;
   comm_forward = 4;
@@ -63,6 +67,8 @@ PairHarmonicSurfaceAvg::~PairHarmonicSurfaceAvg()
     memory->destroy(cutsq);
     memory->destroy(normal_factor);
   }
+  memory->destroy(unit_normal);
+  memory->destroy(unit_normal_stamp);
 
   if (id_fix_store_nnvecs) {
     if (modify->nfix && modify->get_fix_by_id(id_fix_store_nnvecs)) modify->delete_fix(id_fix_store_nnvecs);
@@ -98,12 +104,10 @@ void PairHarmonicSurfaceAvg::compute(int eflag, int vflag)
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
 
-  avec = dynamic_cast<AtomVecEllipsoid *>(atom->style_match("ellipsoid"));
-  if (!avec) error->all(FLERR, "Pair style harmonic/surface/avg requires atom style ellipsoid");
-
   // average surface normal and number of contributing surface atoms for every interacting atom,
-  // valid for owned and ghost atoms afterwards
-  calculate_mean_normal_vectors();
+  // valid for owned and ghost atoms afterwards; with 'normals fix' fix surface/normal has done this
+  // in pre_force of this step
+  if (!external_normals) update_normals();
 
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
@@ -277,10 +281,38 @@ void PairHarmonicSurfaceAvg::find_atom_properties()
    mean average vector calculation and propagator
 ------------------------------------------------------------------------- */
 
+void PairHarmonicSurfaceAvg::update_normals()
+{
+  avec = dynamic_cast<AtomVecEllipsoid *>(atom->style_match("ellipsoid"));
+  if (!avec) error->all(FLERR, "Pair style harmonic/surface/avg requires atom style ellipsoid");
+  // pointers to the per-atom properties may have changed since the last call
+  find_atom_properties();
+  calculate_mean_normal_vectors();
+}
+
+/* ----------------------------------------------------------------------
+   unit body x-axis of surface atom i (owned or ghost), cached for the current averaging
+------------------------------------------------------------------------- */
+
+const double *PairHarmonicSurfaceAvg::surface_unit_normal(int i)
+{
+  if (unit_normal_stamp[i] != averaging_stamp) {
+    double rotation[3][3];
+    MathExtra::quat_to_mat_trans(avec->bonus[atom->ellipsoid[i]].quat, rotation);
+    const double normr = sqrt(rotation[0][0] * rotation[0][0] + rotation[0][1] * rotation[0][1] +
+                              rotation[0][2] * rotation[0][2]);
+    unit_normal[i][0] = rotation[0][0] / normr;
+    unit_normal[i][1] = rotation[0][1] / normr;
+    unit_normal[i][2] = rotation[0][2] / normr;
+    unit_normal_stamp[i] = averaging_stamp;
+  }
+  return unit_normal[i];
+}
+
 void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
 {
   int i, j, ii, jj, inum, jnum, itype, jtype, isurf, iinteract;
-  double normx, normy, normz, normr, rotation[3][3], normal_dist, tang_dist;
+  double normx, normy, normz, normr, normal_dist, tang_dist;
   double delx, dely, delz, rsq;
   int *ilist, *jlist, *numneigh, **firstneigh;
 
@@ -299,6 +331,18 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
   // with newton_pair off, pairs with ghost atoms are stored on both processors,
   // so contributions to owned atoms are complete and ghost contributions are discarded.
   const int nzero = newton_pair ? nall : nlocal;
+
+  // cache of unit surface normals: a new stamp invalidates the entries of the previous averaging
+  if (atom->nmax > nmax_unit_normal) {
+    memory->grow(unit_normal, atom->nmax, 3, "pair:unit_normal");
+    memory->grow(unit_normal_stamp, atom->nmax, "pair:unit_normal_stamp");
+    for (i = nmax_unit_normal; i < atom->nmax; i++) unit_normal_stamp[i] = -1;
+    nmax_unit_normal = atom->nmax;
+  }
+  if (++averaging_stamp < 0) {
+    averaging_stamp = 0;
+    for (i = 0; i < nmax_unit_normal; i++) unit_normal_stamp[i] = -1;
+  }
 
   // zero out normal vector contributors and average normal vectors
   for (i = 0; i < nzero; i++) {
@@ -338,18 +382,14 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
       if (atom->ellipsoid[isurf] < 0)
         error->one(FLERR, "Atom {} of surface type {} is not an ellipsoid, cannot obtain normal for pair style harmonic/surface/avg",
                    atom->tag[isurf], surface_type);
-      // body x-axis as normal, as in pair_ylz.cpp
-      double *iquat = avec->bonus[atom->ellipsoid[isurf]].quat;
-      MathExtra::quat_to_mat_trans(iquat, rotation);
-      // YlZ ellipsoids point outward, normal_factor -1 makes them point inward here
-      normx = normal_factor[itype][jtype] * rotation[0][0];
-      normy = normal_factor[itype][jtype] * rotation[0][1];
-      normz = normal_factor[itype][jtype] * rotation[0][2];
-
-      normr = sqrt(normx * normx + normy * normy + normz * normz);
-      avg_nvecs_atom[iinteract][0] += normx / normr;
-      avg_nvecs_atom[iinteract][1] += normy / normr;
-      avg_nvecs_atom[iinteract][2] += normz / normr;
+      // body x-axis as normal, as in pair_ylz.cpp, normalised once per averaging and surface atom.
+      // YlZ ellipsoids point outward, normal_factor -1 makes them point inward here; applying the
+      // factor (+-1) after the normalisation gives the same bits as normalising the flipped vector
+      const double *unit = surface_unit_normal(isurf);
+      const double nfac = normal_factor[itype][jtype];
+      avg_nvecs_atom[iinteract][0] += nfac * unit[0];
+      avg_nvecs_atom[iinteract][1] += nfac * unit[1];
+      avg_nvecs_atom[iinteract][2] += nfac * unit[2];
       nnvec_contributors_atom[iinteract]++;
     }
   }
@@ -440,10 +480,29 @@ void PairHarmonicSurfaceAvg::calculate_mean_normal_vectors()
 
 void PairHarmonicSurfaceAvg::settings(int narg, char **arg)
 {
-  if (narg != 1) error->all(FLERR, "Illegal pair_style command");
+  if (narg != 1 && narg != 3) error->all(FLERR, "Illegal pair_style command");
 
   surface_type = utils::inumeric(FLERR, arg[0], false, lmp);
   if (surface_type < 1) error->all(FLERR, "Illegal surface type {} for pair style harmonic/surface/avg", surface_type);
+
+  external_normals = 0;
+  if (narg == 3) {
+    if (strcmp(arg[1], "normals") != 0) error->all(FLERR, "Unknown pair_style harmonic/surface/avg keyword {}", arg[1]);
+    if (strcmp(arg[2], "pair") == 0) external_normals = 0;
+    else if (strcmp(arg[2], "fix") == 0) external_normals = 1;
+    else error->all(FLERR, "pair_style harmonic/surface/avg normals must be pair or fix, not {}", arg[2]);
+  }
+}
+
+/* ----------------------------------------------------------------------
+   neighbour list; with 'normals fix' a fix surface/normal must provide the normals
+------------------------------------------------------------------------- */
+
+void PairHarmonicSurfaceAvg::init_style()
+{
+  neighbor->add_request(this);
+  if (external_normals && modify->get_fix_by_style("^surface/normal$").empty())
+    error->all(FLERR, "Pair style harmonic/surface/avg normals fix requires a fix surface/normal");
 }
 
 /* ----------------------------------------------------------------------
