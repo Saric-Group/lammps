@@ -33,6 +33,7 @@ class PairHarmonicSurfaceAvg : public Pair {
   ~PairHarmonicSurfaceAvg() override;
   void compute(int, int) override;
   void settings(int, char **) override;
+  void init_style() override;
   void coeff(int, char **) override;
   double init_one(int, int) override;
   void write_restart(FILE *) override;
@@ -50,6 +51,11 @@ class PairHarmonicSurfaceAvg : public Pair {
   int pack_reverse_comm(int, int, double *) override;
   void unpack_reverse_comm(int, int *, double *) override;
 
+  // average normals and contributors of all interacting atoms (owned and ghost) from the current
+  // positions and the pair's neighbour list; called by compute() or, with 'normals fix', by fix surface/normal
+  void update_normals();
+  int external_normals;    // 1: compute() uses the normals of fix surface/normal instead of averaging itself
+
  protected:
   double **k, **r_zero, **cut, **cut_tang;
   int **normal_factor;
@@ -58,6 +64,13 @@ class PairHarmonicSurfaceAvg : public Pair {
   class AtomVecEllipsoid *avec; // to access orientation of ellipsoids
 
   void calculate_mean_normal_vectors();
+
+  // unit body x-axis of surface atoms, computed once per averaging (stamp = averaging it belongs to)
+  double **unit_normal;
+  int *unit_normal_stamp;
+  int nmax_unit_normal;
+  int averaging_stamp;
+  const double *surface_unit_normal(int);
 
   // custom atom properties to store number of contributors and average normal vector
   char *id_fix_store_nnvecs;
