@@ -27,7 +27,10 @@
               (Pj = director j perpendicular to the bond, unit; R_t(a) = rotation
               by a about t; an interior bond belongs to two angles, so its pair
               counts fully, the first and last bond of a chain by half)
-     perp     K_perp (e2 . t)^2
+     perp     K_perp/4 [(e1.t1)^2 + (e2.t1)^2 + (e2.t2)^2 + (e3.t2)^2]
+              (per bond and bead; an interior bead gets K_perp/2 [(e.t_left)^2 +
+              (e.t_right)^2] ~ K_perp (e.t)^2 from its three angles, an end bead
+              K_perp/4 (e.t)^2, so the directors of the ends stay perpendicular too)
      binding  eps_bind (1 - e2 . n^)   (n^ = normal of atom 2 from d2_name)
 
    delta0 = |b| at the minimum (= 2 sin(d/2), d = 180 deg - theta), alpha0 and
@@ -247,11 +250,6 @@ double AngleDirectorBend::bend(int type, const double *r1, const double *r2, con
     scale3(1.0 / slen, s, ts);
     const double cp = dot3(e2, ts);
 
-    // perpendicularity
-    energy += k_perp[type] * cp * cp;
-    axpy3(2.0 * k_perp[type] * cp, ts, g_e2);
-    axpy3(2.0 * k_perp[type] * cp, e2, g_ts);
-
     // intrinsic bend towards the face
     double p2[3];
     for (int d = 0; d < 3; d++) p2[d] = e2[d] - cp * ts[d];
@@ -297,6 +295,22 @@ double AngleDirectorBend::bend(int type, const double *r1, const double *r2, con
     unit_adjoint(g_ts, ts, slen, g_s);
     add3(g_t1, g_s, g_t1);
     add3(g_t2, g_s, g_t2);
+
+    // perpendicularity of the directors of both atoms of each bond (a quarter per angle, see above)
+    if (k_perp[type] != 0.0) {
+      const double w = 0.25 * k_perp[type];
+      const double *ee[4] = {e1, e2, e2, e3};
+      double *ge[4] = {g_e1, g_e2, g_e2, g_e3};
+      const double *tt[4] = {t1, t1, t2, t2};
+      double *gt[4] = {g_t1, g_t1, g_t2, g_t2};
+      for (int m = 0; m < 4; m++) {
+        if (!ee[m]) continue;
+        const double c = dot3(ee[m], tt[m]);
+        energy += w * c * c;
+        axpy3(2.0 * w * c, tt[m], ge[m]);
+        axpy3(2.0 * w * c, ee[m], gt[m]);
+      }
+    }
 
     // twist of the two bonds of this angle
     if (e1) energy += twist_pair(type, e1, e2, t1, g_e1, g_e2, g_t1);
