@@ -147,7 +147,33 @@ enum { LIFETIME_OFF, LIFETIME_ON, LIFETIME_HYDROLYSIS };
 
 // @FelixWodaczek/chain-index how a reaction updates i_chain_index
 enum { CHAIN_NONE, CHAIN_GROW, CHAIN_SHRINK, CHAIN_NUCLEATE };
-enum { MU_NONE, MU_GROW, MU_NUCLEATE };    // @FelixWodaczek/dipole3d
+enum { MU_NONE, MU_GROW, MU_NUCLEATE, MU_NUCLEATE_RADIAL };    // @FelixWodaczek/dipole3d
+
+/* ----------------------------------------------------------------------
+   @FelixWodaczek/dipole3d unit dipole (mu[0-2], length mu[3]) of an atom created by a nucleation
+   reaction at x, with d the bond from the tail to the head:
+   MU_NUCLEATE along d; MU_NUCLEATE_RADIAL the inward normal of a cylinder along y (-x, 0, -z),
+   made perpendicular to d (director of the binding face, angle_style director/bend)
+------------------------------------------------------------------------- */
+
+static void nucleation_director(int mode, const double *x, const double *d, double *mu)
+{
+  for (int k = 0; k < 4; k++) mu[k] = 0.0;
+  const double dlen = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+  if (dlen <= 0.0) return;
+  double v[3];
+  if (mode == MU_NUCLEATE) {
+    for (int k = 0; k < 3; k++) v[k] = d[k];
+  } else {
+    double r[3] = {-x[0], 0.0, -x[2]};
+    const double rd = (r[0]*d[0] + r[1]*d[1] + r[2]*d[2]) / (dlen*dlen);
+    for (int k = 0; k < 3; k++) v[k] = r[k] - rd*d[k];
+  }
+  const double vlen = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+  if (vlen <= 0.0) return;
+  for (int k = 0; k < 3; k++) mu[k] = v[k]/vlen;
+  mu[3] = 1.0;
+}
 
 /* ---------------------------------------------------------------------- */
 // clang-format off
@@ -503,13 +529,14 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
         }
         if (chain_mode[rxn] != CHAIN_NONE) chain_index_anyflag = 1;
       } else if (strcmp(arg[iarg],"mu_copy") == 0) {
-        // @FelixWodaczek/dipole3d mu_copy none|grow|nucleate
+        // @FelixWodaczek/dipole3d mu_copy none|grow|nucleate|nucleate_radial
         if (iarg+2 > narg) error->all(FLERR,"Illegal fix bond/react command: "
                                       "'mu_copy' has too few arguments");
         if (!atom->mu_flag) error->all(FLERR,"Fix bond/react: 'mu_copy' requires atom attribute mu");
         if (strcmp(arg[iarg+1],"none") == 0) mu_mode[rxn] = MU_NONE;
         else if (strcmp(arg[iarg+1],"grow") == 0) mu_mode[rxn] = MU_GROW;
         else if (strcmp(arg[iarg+1],"nucleate") == 0) mu_mode[rxn] = MU_NUCLEATE;
+        else if (strcmp(arg[iarg+1],"nucleate_radial") == 0) mu_mode[rxn] = MU_NUCLEATE_RADIAL;
         else error->all(FLERR,"Fix bond/react: Illegal option for 'mu_copy' keyword: {}",arg[iarg+1]);
         if (mu_mode[rxn] != MU_NONE) mu_anyflag = 1;
         // the head is the template atom with the largest chain index
@@ -815,8 +842,8 @@ FixBondReact::FixBondReact(LAMMPS *lmp, int narg, char **arg) :
     if (ncreated == 0)
       error->all(FLERR,"Fix bond/react: 'mu_copy grow|nucleate' of reaction {} needs created atoms",
                  rxn_name[myrxn]);
-    if (mu_mode[myrxn] == MU_NUCLEATE && ncreated != 2)
-      error->all(FLERR,"Fix bond/react: 'mu_copy nucleate' of reaction {} creates {} atoms, "
+    if ((mu_mode[myrxn] == MU_NUCLEATE || mu_mode[myrxn] == MU_NUCLEATE_RADIAL) && ncreated != 2)
+      error->all(FLERR,"Fix bond/react: 'mu_copy nucleate|nucleate_radial' of reaction {} creates {} atoms, "
                  "it needs exactly 2 (tail and head)",rxn_name[myrxn],ncreated);
   }
 
@@ -4656,15 +4683,11 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
       if (mu_mode[rxnID] == MU_GROW) {
         for (int k = 0; k < 4; k++) mus[m][k] = mu_values[iupdate][k];
         for (int k = 0; k < 3; k++) normals[m][k] = mu_values[iupdate][4+k];
-      } else if (mu_mode[rxnID] == MU_NUCLEATE && second >= 0) {
+      } else if ((mu_mode[rxnID] == MU_NUCLEATE || mu_mode[rxnID] == MU_NUCLEATE_RADIAL) && second >= 0) {
         double d[3] = {coords[second][0] - coords[first][0], coords[second][1] - coords[first][1],
                        coords[second][2] - coords[first][2]};
         domain->minimum_image(FLERR, d[0], d[1], d[2]);
-        const double dlen = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
-        if (dlen > 0.0) {
-          for (int k = 0; k < 3; k++) mus[m][k] = d[k]/dlen;
-          mus[m][3] = 1.0;
-        }
+        nucleation_director(mu_mode[rxnID], coords[m], d, mus[m]);
       }
     }
     int reject = insert_energy_reject(coords,mus,normals,my_update_mega_glove,iupdate,fitroot,createmol);
@@ -4757,19 +4780,16 @@ int FixBondReact::insert_atoms_setup(tagint **my_update_mega_glove, int iupdate)
                              "atom with a chain index >= 0 and a dipole, created atoms get no dipole",
                              rxn_name[rxnID]);
           }
-        } else if (mu_mode[rxnID] == MU_NUCLEATE) {
-          // unit vector from the first (tail) to the second (head) created atom
+        } else if (mu_mode[rxnID] == MU_NUCLEATE || mu_mode[rxnID] == MU_NUCLEATE_RADIAL) {
+          // nucleate: unit vector from the first (tail) to the second (head) created atom;
+          // nucleate_radial: inward cylinder normal (axis y) at the atom, perpendicular to that bond
           int first = -1, second = -1;
           for (int mm = 0; mm < twomol->natoms; mm++)
             if (create_atoms[mm][rxnID] == 1) { if (first < 0) first = mm; else second = mm; }
           double d[3] = {coords[second][0] - coords[first][0], coords[second][1] - coords[first][1],
                          coords[second][2] - coords[first][2]};
           domain->minimum_image(FLERR, d[0], d[1], d[2]);
-          const double dlen = sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
-          if (dlen > 0.0) {
-            for (int k = 0; k < 3; k++) myaddatom.mu[k] = d[k]/dlen;
-            myaddatom.mu[3] = 1.0;
-          }
+          nucleation_director(mu_mode[rxnID], coords[m], d, myaddatom.mu);
         }
         myaddatom.x[0] = coords[m][0];
         myaddatom.x[1] = coords[m][1];
