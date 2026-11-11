@@ -45,19 +45,17 @@ class AngleDirectorBend : public Angle {
 
   // energy of one angle; r1 = x2 - x1, r2 = x3 - x2; e1-e3 unit directors (nullptr = none);
   // normal of atom 2 (nullptr or |n| < 1e-6 = none). Fills the forces on atoms 1 and 3 (f2 = -f1 - f3)
-  // and the torques on the three directors.
+  // and the torques on the directors (only atom 2's is used).
   double bend(int type, const double *r1, const double *r2, const double *e1, const double *e2,
               const double *e3, const double *normal, double *f1, double *f3, double *tq1,
               double *tq2, double *tq3) const;
 
  protected:
-  double *k_b, *delta0, *alpha0, *k_tw, *tau0, *k_perp, *eps_bind;
+  double *k_b, *delta0, *alpha0, *eps_bind;
   std::string normal_name;    // per-atom array name without d2_, empty = no binding term
 
   void allocate();
   double **normal_array();
-  double twist_pair(int type, const double *ej, const double *ek, const double *t, double *g_ej,
-                    double *g_ek, double *g_t) const;
 };
 
 }    // namespace LAMMPS_NS
