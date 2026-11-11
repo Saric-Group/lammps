@@ -13,34 +13,25 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   angle_style director/bend d2_name|none
-   angle_coeff N K_b delta0 alpha0 eps_bind
+   angle_style director/bend
+   angle_coeff N K_b delta0 alpha0
 
    Bend of an intrinsically curved filament whose beads carry a unit
    director e (atom->mu, the side of the membrane-binding face; rotated by
-   fix nve/sphere update dipole), and binding of the director to a surface
-   normal. For the angle 1-2-3 with unit bond vectors t1 = (x2-x1)/|..|,
-   t2 = (x3-x2)/|..|, bend b = t2 - t1, mean tangent t = (t1+t2)/|..| and
-   q = director of atom 2 perpendicular to t (unit):
+   fix nve/sphere update dipole). For the angle 1-2-3 with unit bond vectors
+   t1 = (x2-x1)/|..|, t2 = (x3-x2)/|..|, bend b = t2 - t1, mean tangent
+   t = (t1+t2)/|..| and q = director of atom 2 perpendicular to t (unit):
 
-     bend     K_b |b - delta0 (cos(alpha0) q + sin(alpha0) t x q)|^2
-     binding  eps_bind (1 - e2 . n^)   (n^ = normal of atom 2 from d2_name)
+     E = K_b |b - delta0 (cos(alpha0) q + sin(alpha0) t x q)|^2
 
-   The perpendicularity of the directors to the backbone and the twist
-   between neighbouring directors are bond terms (bond_style director), so
-   that they also act on chains without angles (nucleated dimers).
-   delta0 = |b| at the minimum (= 2 sin(d/2), d = 180 deg - theta), alpha0
-   in degrees. The bend is a single smooth well in the bond vectors for any
-   delta0, also near straight. Only the binding term refers to the surface:
-   with eps_bind = 0 the energy is invariant under rotating the filament with
-   its directors about its axis.
-
-   Atom 2 without director: E = K_b |b|^2; no normal (d2_name none,
-   |n| < 1e-6): no binding. Forces on the beads, torques -e x dE/de on the
-   director of atom 2. The normal is taken as given (no force on what
-   defines it). Needs atom attributes mu and torque (atom style dipole +
-   sphere); with newton_bond on the angle is computed by the owner of atom 2,
-   whose normal is local.
+   delta0 = |b| at the minimum (= 2 sin(d/2), d = 180 deg - theta), alpha0 in
+   degrees (0: the filament curves towards its director). A single smooth
+   well in the bond vectors for any delta0, also near straight. The other
+   terms of the model: perpendicularity and twist of the directors in
+   bond_style director, binding of the director to a surface normal in fix
+   director/bind. Atom 2 without director: E = K_b |b|^2. Forces on the
+   beads, torque -e x dE/de on the director of atom 2. Needs atom attributes
+   mu and torque (atom style dipole + sphere).
 ------------------------------------------------------------------------- */
 
 #include "angle_director_bend.h"
@@ -65,17 +56,8 @@ using MathConst::MY_PI;
 using namespace MathExtra;
 
 static constexpr double SMALL = 1.0e-8;
-static constexpr double NORMAL_SMALL = 1.0e-6;
 
 /* ---------------------------------------------------------------------- */
-
-// v += s * w
-static inline void axpy3(double s, const double *w, double *v)
-{
-  v[0] += s * w[0];
-  v[1] += s * w[1];
-  v[2] += s * w[2];
-}
 
 // adjoint of u = v/|v|: g_v += (g_u - (g_u.u) u)/|v|
 static inline void unit_adjoint(const double *g_u, const double *u, double len, double *g_v)
@@ -98,7 +80,7 @@ static inline void proj_adjoint(const double *g_p, const double *v, const double
 /* ---------------------------------------------------------------------- */
 
 AngleDirectorBend::AngleDirectorBend(LAMMPS *_lmp) :
-    Angle(_lmp), k_b(nullptr), delta0(nullptr), alpha0(nullptr), eps_bind(nullptr)
+    Angle(_lmp), k_b(nullptr), delta0(nullptr), alpha0(nullptr)
 {
   born_matrix_enable = 0;
 }
@@ -112,19 +94,7 @@ AngleDirectorBend::~AngleDirectorBend()
     memory->destroy(k_b);
     memory->destroy(delta0);
     memory->destroy(alpha0);
-    memory->destroy(eps_bind);
   }
-}
-
-/* ---------------------------------------------------------------------- */
-
-void AngleDirectorBend::settings(int narg, char **arg)
-{
-  if (narg != 1) error->all(FLERR, "Illegal angle_style director/bend command: needs d2_<name> or none");
-  std::string name = arg[0];
-  if (name == "none") normal_name.clear();
-  else if (utils::strmatch(name, "^d2_")) normal_name = name.substr(3);
-  else error->all(FLERR, "Angle style director/bend needs a per-atom array d2_<name> or none, got {}", name);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -134,35 +104,14 @@ void AngleDirectorBend::init_style()
   if (!atom->mu_flag || !atom->torque_flag)
     error->all(FLERR, "Angle style director/bend needs atom attributes mu and torque "
                "(atom style with dipole and sphere)");
-  if (normal_name.empty()) return;
-  int flag, cols, ghost;
-  const int index = atom->find_custom_ghost(normal_name.c_str(), flag, cols, ghost);
-  if (index < 0 || flag != 1 || cols != 3)
-    error->all(FLERR, "Angle style director/bend needs a 3-column per-atom array d2_{}", normal_name);
-  if (!force->newton_bond && !ghost)
-    error->all(FLERR, "Angle style director/bend with newton_bond off needs d2_{} on ghost atoms "
-               "(fix property/atom ... ghost yes)", normal_name);
 }
 
 /* ---------------------------------------------------------------------- */
 
-double **AngleDirectorBend::normal_array()
+double AngleDirectorBend::bend(int type, const double *r1, const double *r2, const double *e2,
+                               double *f1, double *f3, double *tq2) const
 {
-  if (normal_name.empty()) return nullptr;
-  int flag, cols;
-  const int index = atom->find_custom(normal_name.c_str(), flag, cols);
-  if (index < 0 || flag != 1 || cols != 3)
-    error->one(FLERR, "Angle style director/bend: per-atom array d2_{} not found", normal_name);
-  return atom->darray[index];
-}
-
-/* ---------------------------------------------------------------------- */
-
-double AngleDirectorBend::bend(int type, const double *r1, const double *r2, const double *e1,
-                               const double *e2, const double *e3, const double *normal,
-                               double *f1, double *f3, double *tq1, double *tq2, double *tq3) const
-{
-  for (int d = 0; d < 3; d++) f1[d] = f3[d] = tq1[d] = tq2[d] = tq3[d] = 0.0;
+  for (int d = 0; d < 3; d++) f1[d] = f3[d] = tq2[d] = 0.0;
   const double len1 = len3(r1), len2 = len3(r2);
   if (len1 == 0.0 || len2 == 0.0) return 0.0;
 
@@ -175,64 +124,51 @@ double AngleDirectorBend::bend(int type, const double *r1, const double *r2, con
 
   double energy = 0.0;
   double g_t1[3] = {0.0, 0.0, 0.0}, g_t2[3] = {0.0, 0.0, 0.0};
-  double g_e1[3] = {0.0, 0.0, 0.0}, g_e2[3] = {0.0, 0.0, 0.0}, g_e3[3] = {0.0, 0.0, 0.0};
+  double g_e2[3] = {0.0, 0.0, 0.0};
   double g_b[3] = {0.0, 0.0, 0.0}, g_ts[3] = {0.0, 0.0, 0.0};
 
-  if (!e2 || slen < SMALL) {
-    // no director (or folded back): prefer straight
-    energy += k_b[type] * lensq3(b);
-    scale3(2.0 * k_b[type], b, g_b);
-  } else {
-    double ts[3];
+  double ts[3] = {0.0, 0.0, 0.0}, p2[3] = {0.0, 0.0, 0.0};
+  double plen = 0.0;
+  if (e2 && slen >= SMALL) {
     scale3(1.0 / slen, s, ts);
     const double cp = dot3(e2, ts);
-
-    // intrinsic bend towards the face
-    double p2[3];
     for (int d = 0; d < 3; d++) p2[d] = e2[d] - cp * ts[d];
-    const double plen = len3(p2);
-    if (plen < SMALL) {
-      energy += k_b[type] * lensq3(b);
-      scale3(2.0 * k_b[type], b, g_b);
-    } else {
-      double q[3], a[3], target[3], diff[3];
-      scale3(1.0 / plen, p2, q);
-      cross3(ts, q, a);
-      const double ca = delta0[type] * cos(alpha0[type]), sa = delta0[type] * sin(alpha0[type]);
-      for (int d = 0; d < 3; d++) {
-        target[d] = ca * q[d] + sa * a[d];
-        diff[d] = b[d] - target[d];
-      }
-      energy += k_b[type] * lensq3(diff);
-      scale3(2.0 * k_b[type], diff, g_b);
-      double g_q[3], g_a[3], tmp[3];
-      scale3(-ca, g_b, g_q);    // g_target = -g_b
-      scale3(-sa, g_b, g_a);
-      // a = ts x q
-      cross3(q, g_a, tmp);
-      add3(g_ts, tmp, g_ts);
-      cross3(g_a, ts, tmp);
-      add3(g_q, tmp, g_q);
-      double g_p2[3] = {0.0, 0.0, 0.0};
-      unit_adjoint(g_q, q, plen, g_p2);
-      proj_adjoint(g_p2, e2, ts, g_e2, g_ts);
-    }
+    plen = len3(p2);
+  }
 
-    // binding of the face to the surface
-    if (normal && eps_bind[type] != 0.0) {
-      const double nlen = len3(normal);
-      if (nlen >= NORMAL_SMALL) {
-        energy += eps_bind[type] * (1.0 - dot3(e2, normal) / nlen);
-        axpy3(-eps_bind[type] / nlen, normal, g_e2);
-      }
+  if (plen < SMALL) {
+    // no director (or director along the backbone, or folded back): prefer straight
+    energy = k_b[type] * lensq3(b);
+    scale3(2.0 * k_b[type], b, g_b);
+  } else {
+    // intrinsic bend towards the face
+    double q[3], a[3], target[3], diff[3];
+    scale3(1.0 / plen, p2, q);
+    cross3(ts, q, a);
+    const double ca = delta0[type] * cos(alpha0[type]), sa = delta0[type] * sin(alpha0[type]);
+    for (int d = 0; d < 3; d++) {
+      target[d] = ca * q[d] + sa * a[d];
+      diff[d] = b[d] - target[d];
     }
+    energy = k_b[type] * lensq3(diff);
+    scale3(2.0 * k_b[type], diff, g_b);
+    double g_q[3], g_a[3], tmp[3];
+    scale3(-ca, g_b, g_q);    // g_target = -g_b
+    scale3(-sa, g_b, g_a);
+    // a = ts x q
+    cross3(q, g_a, tmp);
+    add3(g_ts, tmp, g_ts);
+    cross3(g_a, ts, tmp);
+    add3(g_q, tmp, g_q);
+    double g_p2[3] = {0.0, 0.0, 0.0};
+    unit_adjoint(g_q, q, plen, g_p2);
+    proj_adjoint(g_p2, e2, ts, g_e2, g_ts);
 
     // ts = s/|s|, s = t1 + t2
     double g_s[3] = {0.0, 0.0, 0.0};
     unit_adjoint(g_ts, ts, slen, g_s);
     add3(g_t1, g_s, g_t1);
     add3(g_t2, g_s, g_t2);
-
   }
 
   // b = t2 - t1
@@ -248,10 +184,8 @@ double AngleDirectorBend::bend(int type, const double *r1, const double *r2, con
     f3[d] = -g_r2[d];
   }
 
-  // torque on a director e: -e x dE/de
-  if (e1) cross3(g_e1, e1, tq1);
+  // torque on the director: -e x dE/de
   if (e2) cross3(g_e2, e2, tq2);
-  if (e3) cross3(g_e3, e3, tq3);
   return energy;
 }
 
@@ -259,57 +193,49 @@ double AngleDirectorBend::bend(int type, const double *r1, const double *r2, con
 
 void AngleDirectorBend::compute(int eflag, int vflag)
 {
-  double r1[3], r2[3], f1[3], f3[3], tq1[3], tq2[3], tq3[3];
-  double e[3][3];
+  double r1[3], r2[3], f1[3], f3[3], tq2[3], e2[3];
   ev_init(eflag, vflag);
 
   double **x = atom->x;
   double **f = atom->f;
   double **mu = atom->mu;
   double **torque = atom->torque;
-  double **normal = normal_array();
   int **anglelist = neighbor->anglelist;
   const int nanglelist = neighbor->nanglelist;
   const int nlocal = atom->nlocal;
   const int newton_bond = force->newton_bond;
 
   for (int n = 0; n < nanglelist; n++) {
-    const int ia[3] = {anglelist[n][0], anglelist[n][1], anglelist[n][2]};
+    const int i1 = anglelist[n][0], i2 = anglelist[n][1], i3 = anglelist[n][2];
     const int type = anglelist[n][3];
 
     // the topology lists hold the closest images
     for (int d = 0; d < 3; d++) {
-      r1[d] = x[ia[1]][d] - x[ia[0]][d];
-      r2[d] = x[ia[2]][d] - x[ia[1]][d];
+      r1[d] = x[i2][d] - x[i1][d];
+      r2[d] = x[i3][d] - x[i2][d];
     }
-    const double *ep[3];
-    for (int m = 0; m < 3; m++) {
-      const double mlen = len3(mu[ia[m]]);
-      if (mlen > 0.0) {
-        scale3(1.0 / mlen, mu[ia[m]], e[m]);
-        ep[m] = e[m];
-      } else ep[m] = nullptr;
+    const double mlen = len3(mu[i2]);
+    const double *ep = nullptr;
+    if (mlen > 0.0) {
+      scale3(1.0 / mlen, mu[i2], e2);
+      ep = e2;
     }
+    const double eangle = bend(type, r1, r2, ep, f1, f3, tq2);
 
-    const double eangle = bend(type, r1, r2, ep[0], ep[1], ep[2], normal ? normal[ia[1]] : nullptr,
-                               f1, f3, tq1, tq2, tq3);
-    const double *tq[3] = {tq1, tq2, tq3};
-
-    for (int m = 0; m < 3; m++) {
-      const int i = ia[m];
-      if (!newton_bond && i >= nlocal) continue;
+    if (newton_bond || i1 < nlocal)
+      for (int d = 0; d < 3; d++) f[i1][d] += f1[d];
+    if (newton_bond || i2 < nlocal)
       for (int d = 0; d < 3; d++) {
-        if (m == 0) f[i][d] += f1[d];
-        else if (m == 1) f[i][d] -= f1[d] + f3[d];
-        else f[i][d] += f3[d];
-        torque[i][d] += tq[m][d];
+        f[i2][d] -= f1[d] + f3[d];
+        torque[i2][d] += tq2[d];
       }
-    }
+    if (newton_bond || i3 < nlocal)
+      for (int d = 0; d < 3; d++) f[i3][d] += f3[d];
 
     // ev_tally takes del1 = x1 - x2 = -r1, del2 = x3 - x2 = r2
     if (evflag)
-      ev_tally(ia[0], ia[1], ia[2], nlocal, newton_bond, eangle, f1, f3, -r1[0], -r1[1], -r1[2],
-               r2[0], r2[1], r2[2]);
+      ev_tally(i1, i2, i3, nlocal, newton_bond, eangle, f1, f3, -r1[0], -r1[1], -r1[2], r2[0],
+               r2[1], r2[2]);
   }
 }
 
@@ -322,7 +248,6 @@ void AngleDirectorBend::allocate()
   memory->create(k_b, np1, "angle:k_b");
   memory->create(delta0, np1, "angle:delta0");
   memory->create(alpha0, np1, "angle:alpha0");
-  memory->create(eps_bind, np1, "angle:eps_bind");
   memory->create(setflag, np1, "angle:setflag");
   for (int i = 1; i < np1; i++) setflag[i] = 0;
 }
@@ -331,22 +256,22 @@ void AngleDirectorBend::allocate()
 
 void AngleDirectorBend::coeff(int narg, char **arg)
 {
-  if (narg != 5) error->all(FLERR, "Incorrect args for angle coefficients" + utils::errorurl(21));
+  if (narg != 4) error->all(FLERR, "Incorrect args for angle coefficients" + utils::errorurl(21));
   if (!allocated) allocate();
 
   int ilo, ihi;
   utils::bounds(FLERR, arg[0], 1, atom->nangletypes, ilo, ihi, error);
-  const double v[4] = {utils::numeric(FLERR, arg[1], false, lmp), utils::numeric(FLERR, arg[2], false, lmp),
-                       utils::numeric(FLERR, arg[3], false, lmp), utils::numeric(FLERR, arg[4], false, lmp)};
-  if (v[1] < 0.0 || v[1] > 2.0)
+  const double k_one = utils::numeric(FLERR, arg[1], false, lmp);
+  const double delta_one = utils::numeric(FLERR, arg[2], false, lmp);
+  const double alpha_one = utils::numeric(FLERR, arg[3], false, lmp);
+  if (delta_one < 0.0 || delta_one > 2.0)
     error->all(FLERR, "Angle style director/bend: delta0 must be in [0, 2] (|b| = 2 sin(d/2))");
 
   int count = 0;
   for (int i = ilo; i <= ihi; i++) {
-    k_b[i] = v[0];
-    delta0[i] = v[1];
-    alpha0[i] = v[2] * DEG2RAD;
-    eps_bind[i] = v[3];
+    k_b[i] = k_one;
+    delta0[i] = delta_one;
+    alpha0[i] = alpha_one * DEG2RAD;
     setflag[i] = 1;
     count++;
   }
@@ -365,7 +290,7 @@ double AngleDirectorBend::equilibrium_angle(int i)
 void AngleDirectorBend::write_restart(FILE *fp)
 {
   const int n = atom->nangletypes;
-  for (double *p : {k_b, delta0, alpha0, eps_bind}) fwrite(&p[1], sizeof(double), n, fp);
+  for (double *p : {k_b, delta0, alpha0}) fwrite(&p[1], sizeof(double), n, fp);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -374,7 +299,7 @@ void AngleDirectorBend::read_restart(FILE *fp)
 {
   allocate();
   const int n = atom->nangletypes;
-  for (double *p : {k_b, delta0, alpha0, eps_bind}) {
+  for (double *p : {k_b, delta0, alpha0}) {
     if (comm->me == 0) utils::sfread(FLERR, &p[1], sizeof(double), n, fp, nullptr, error);
     MPI_Bcast(&p[1], n, MPI_DOUBLE, 0, world);
   }
@@ -383,33 +308,10 @@ void AngleDirectorBend::read_restart(FILE *fp)
 
 /* ---------------------------------------------------------------------- */
 
-void AngleDirectorBend::write_restart_settings(FILE *fp)
-{
-  const int len = normal_name.size() + 1;
-  fwrite(&len, sizeof(int), 1, fp);
-  fwrite(normal_name.c_str(), sizeof(char), len, fp);
-}
-
-/* ---------------------------------------------------------------------- */
-
-void AngleDirectorBend::read_restart_settings(FILE *fp)
-{
-  int len = 0;
-  if (comm->me == 0) utils::sfread(FLERR, &len, sizeof(int), 1, fp, nullptr, error);
-  MPI_Bcast(&len, 1, MPI_INT, 0, world);
-  auto *name = new char[len];
-  if (comm->me == 0) utils::sfread(FLERR, name, sizeof(char), len, fp, nullptr, error);
-  MPI_Bcast(name, len, MPI_CHAR, 0, world);
-  normal_name = name;
-  delete[] name;
-}
-
-/* ---------------------------------------------------------------------- */
-
 void AngleDirectorBend::write_data(FILE *fp)
 {
   for (int i = 1; i <= atom->nangletypes; i++)
-    fprintf(fp, "%d %g %g %g %g\n", i, k_b[i], delta0[i], RAD2DEG * alpha0[i], eps_bind[i]);
+    fprintf(fp, "%d %g %g %g\n", i, k_b[i], delta0[i], RAD2DEG * alpha0[i]);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -418,24 +320,20 @@ double AngleDirectorBend::single(int type, int i1, int i2, int i3)
 {
   double **x = atom->x;
   double **mu = atom->mu;
-  double r1[3], r2[3], f1[3], f3[3], tq1[3], tq2[3], tq3[3], e[3][3];
+  double r1[3], r2[3], f1[3], f3[3], tq2[3], e2[3];
   for (int d = 0; d < 3; d++) {
     r1[d] = x[i2][d] - x[i1][d];
     r2[d] = x[i3][d] - x[i2][d];
   }
   domain->minimum_image(FLERR, r1);
   domain->minimum_image(FLERR, r2);
-  const int ia[3] = {i1, i2, i3};
-  const double *ep[3];
-  for (int m = 0; m < 3; m++) {
-    const double mlen = len3(mu[ia[m]]);
-    if (mlen > 0.0) {
-      scale3(1.0 / mlen, mu[ia[m]], e[m]);
-      ep[m] = e[m];
-    } else ep[m] = nullptr;
+  const double mlen = len3(mu[i2]);
+  const double *ep = nullptr;
+  if (mlen > 0.0) {
+    scale3(1.0 / mlen, mu[i2], e2);
+    ep = e2;
   }
-  double **normal = normal_array();
-  return bend(type, r1, r2, ep[0], ep[1], ep[2], normal ? normal[i2] : nullptr, f1, f3, tq1, tq2, tq3);
+  return bend(type, r1, r2, ep, f1, f3, tq2);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -444,6 +342,6 @@ void *AngleDirectorBend::extract(const char *str, int &dim)
 {
   dim = 1;
   if (strcmp(str, "k_b") == 0) return (void *) k_b;
-  if (strcmp(str, "eps_bind") == 0) return (void *) eps_bind;
+  if (strcmp(str, "delta0") == 0) return (void *) delta0;
   return nullptr;
 }
