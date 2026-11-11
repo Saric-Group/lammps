@@ -52,7 +52,10 @@ class FixNucleate : public Fix {
     std::vector<int> overlap_except; // per atom type: 1 if ignored in the overlap check
     int noffset; // run at timestep + noffset to avoid clashes with eg. bond/react
     double rmass_new; // @FelixWodaczek/dipole3d mass of inserted atoms, <= 0: keep the one of the atom style
-    int mu_flag; // @FelixWodaczek/dipole3d set the dipole of both atoms of an inserted dimer along its bond (tail to head)
+    // @FelixWodaczek/dipole3d dipole of both atoms of an inserted dimer: none, along its bond (tail to head),
+    // or the inward membrane normal perpendicular to the bond
+    enum { MU_OFF = 0, MU_BOND = 1, MU_NORMAL = 2 };
+    int mu_flag;
     int chain_index_flag; // @FelixWodaczek/chain-index set i_chain_index of inserted dimers to 0 (tail) and 1 (head)
 
     // lifetime tracking flags and variables

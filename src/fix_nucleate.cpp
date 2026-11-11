@@ -179,9 +179,12 @@ FixNucleate::FixNucleate(class LAMMPS *lmp, int narg, char **arg) : Fix(lmp, nar
     } else if (strcmp(arg[iarg], "mu") == 0) {
       if (iarg + 2 > narg) error->all(FLERR, "Illegal fix nucleate command: "
                                     "'mu' keyword has too few arguments");
-      mu_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp);
+      // yes: along the bond (tail to head); normal: inward membrane normal (-n of the ellipsoid, the
+      // convention of d2_avg_nvecs) perpendicular to the bond, the binding-face director of angle_style director/bend
+      if (strcmp(arg[iarg + 1], "normal") == 0) mu_flag = MU_NORMAL;
+      else mu_flag = utils::logical(FLERR, arg[iarg + 1], false, lmp) ? MU_BOND : MU_OFF;
       if (mu_flag && !atom->mu_flag)
-        error->all(FLERR, "Fix nucleate: 'mu yes' requires atom attribute mu");
+        error->all(FLERR, "Fix nucleate: 'mu yes|normal' requires atom attribute mu");
       iarg += 2;
     } else {
       error->all(FLERR, "Illegal fix nucleate command.");
@@ -318,13 +321,15 @@ void FixNucleate::post_integrate() {
 
   // make arrays for communicating coordinates
   // already initialised to 0.0
-  memory->create(insert_coords, comm->nprocs*max_nucleate_global, 6, "fix_nucleate:insert_coords");
+  // columns 0-5: the two atoms, 6-8: surface normal of the ellipsoid (for mu normal)
+  memory->create(insert_coords, comm->nprocs*max_nucleate_global, 9, "fix_nucleate:insert_coords");
   memory->create(filled_coords_flags, comm->nprocs*max_nucleate_global, "fix_nucleate:filled_coords_flags");
   
   // initialize arrays so the MPI_Allreduce works correctly
   for(int i=0;i<comm->nprocs*max_nucleate_global;i++) {
     insert_coords[i][0] = insert_coords[i][1] = insert_coords[i][2] = 0.0;
     insert_coords[i][3] = insert_coords[i][4] = insert_coords[i][5] = 0.0;
+    insert_coords[i][6] = insert_coords[i][7] = insert_coords[i][8] = 0.0;
     filled_coords_flags[i] = 0;
   }
   
@@ -421,6 +426,7 @@ void FixNucleate::post_integrate() {
       insert_coords[comm->me*max_nucleate_global + n_added_local][3] = x_insert[3];
       insert_coords[comm->me*max_nucleate_global + n_added_local][4] = x_insert[4];
       insert_coords[comm->me*max_nucleate_global + n_added_local][5] = x_insert[5];
+      for (int k = 0; k < 3; k++) insert_coords[comm->me*max_nucleate_global + n_added_local][6+k] = normal[k];
 
       filled_coords_flags[comm->me*max_nucleate_global + n_added_local] = 1;
       n_added_local++;
@@ -432,7 +438,7 @@ void FixNucleate::post_integrate() {
 
   // communicate all inserted coords to all procs
   for (int i=0; i < comm->nprocs*max_nucleate_global; i++) {
-    MPI_Allreduce(MPI_IN_PLACE, insert_coords[i], 6, MPI_DOUBLE, MPI_SUM, world);
+    MPI_Allreduce(MPI_IN_PLACE, insert_coords[i], 9, MPI_DOUBLE, MPI_SUM, world);
   }
   MPI_Allreduce(MPI_IN_PLACE, filled_coords_flags, comm->nprocs*max_nucleate_global, MPI_INT, MPI_SUM, world);
   
@@ -490,10 +496,18 @@ void FixNucleate::post_integrate() {
       const int tail = atom->nlocal - 2, head = atom->nlocal - 1;
       double d[3] = {xn[head][0] - xn[tail][0], xn[head][1] - xn[tail][1], xn[head][2] - xn[tail][2]};
       domain->minimum_image(FLERR, d[0], d[1], d[2]);
-      const double dlen = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+      double v[3] = {d[0], d[1], d[2]};
+      if (mu_flag == MU_NORMAL) {
+        // inward normal -n with its component along the bond removed
+        const double *nrm = insert_coords[icoord] + 6;
+        const double dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        const double nd = dd > 0.0 ? -(nrm[0] * d[0] + nrm[1] * d[1] + nrm[2] * d[2]) / dd : 0.0;
+        for (int k = 0; k < 3; k++) v[k] = -nrm[k] - nd * d[k];
+      }
+      const double vlen = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
       for (int newind = tail; newind <= head; newind++) {
-        for (int k = 0; k < 3; k++) atom->mu[newind][k] = (dlen > 0.0) ? d[k] / dlen : 0.0;
-        atom->mu[newind][3] = (dlen > 0.0) ? 1.0 : 0.0;
+        for (int k = 0; k < 3; k++) atom->mu[newind][k] = (vlen > 0.0) ? v[k] / vlen : 0.0;
+        atom->mu[newind][3] = (vlen > 0.0) ? 1.0 : 0.0;
       }
     }
 
