@@ -1,0 +1,66 @@
+/* -*- c++ -*- ----------------------------------------------------------
+   LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
+
+   Copyright (2003) Sandia Corporation.  Under the terms of Contract
+   DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
+   certain rights in this software.  This software is distributed under
+   the GNU General Public License.
+
+   See the README file in the top-level LAMMPS directory.
+------------------------------------------------------------------------- */
+
+#ifdef ANGLE_CLASS
+// clang-format off
+AngleStyle(director/bend,AngleDirectorBend);
+// clang-format on
+#else
+
+#ifndef LMP_ANGLE_DIRECTOR_BEND_H
+#define LMP_ANGLE_DIRECTOR_BEND_H
+
+#include "angle.h"
+
+#include <string>
+
+namespace LAMMPS_NS {
+
+class AngleDirectorBend : public Angle {
+ public:
+  AngleDirectorBend(class LAMMPS *);
+  ~AngleDirectorBend() override;
+  void compute(int, int) override;
+  void settings(int, char **) override;
+  void coeff(int, char **) override;
+  void init_style() override;
+  double equilibrium_angle(int) override;
+  void write_restart(FILE *) override;
+  void read_restart(FILE *) override;
+  void write_restart_settings(FILE *) override;
+  void read_restart_settings(FILE *) override;
+  void write_data(FILE *) override;
+  double single(int, int, int, int) override;
+  void *extract(const char *, int &) override;
+
+  // energy of one angle; r1 = x2 - x1, r2 = x3 - x2; e1-e3 unit directors (nullptr = none);
+  // normal of atom 2 (nullptr or |n| < 1e-6 = none). Fills the forces on atoms 1 and 3 (f2 = -f1 - f3)
+  // and the torques on the three directors.
+  double bend(int type, const double *r1, const double *r2, const double *e1, const double *e2,
+              const double *e3, const double *normal, double *f1, double *f3, double *tq1,
+              double *tq2, double *tq3) const;
+
+ protected:
+  double *k_b, *delta0, *alpha0, *k_tw, *tau0, *k_perp, *eps_bind;
+  std::string normal_name;    // per-atom array name without d2_, empty = no binding term
+
+  void allocate();
+  double **normal_array();
+  double twist_pair(int type, const double *ej, const double *ek, const double *t, double *g_ej,
+                    double *g_ek, double *g_t) const;
+};
+
+}    // namespace LAMMPS_NS
+
+#endif
+#endif
